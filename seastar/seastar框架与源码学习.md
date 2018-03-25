@@ -493,7 +493,8 @@ seastar::semaphore::signal()
 				seastar::sleep(std::chrono::seconds(10)).then([&stop] {
 				stop = true;
 				});
-				return seastar::when_all_succeed(loop_in_sg(1, stop, sg1), 				loop_in_sg(10, stop, sg2)).then(
+				return seastar::when_all_succeed(loop_in_sg(1, stop, sg1), 
+				loop_in_sg(10, stop, sg2)).then(
 					[] (long n1, long n2) {
 						std::cout << "Counters: " << n1 << ", " << n2 << "\n";
 					});
@@ -569,7 +570,7 @@ C++确保std::unique_ptr始终只有指针一个拷贝，比如
 	seastar::future<int> slow_do_something(std::unique_ptr<T> obj) { //[C++ 11] 在此scope内用完即毁
 		using namespace std::chrono_literals;
 		return seastar::sleep(10ms).then([obj = std::move(obj)] () mutable {//[C++ 14] ownership转移到captured state
-		return do_something(std::move(obj)); // [C++ 11] 在obj销毁前，ownership先转移一下。                                                              // 由于std::move会导致obj read-only，从而禁止std::move操作，所以前面还要加上mutable去掉read-only限制
+			return do_something(std::move(obj)); // [C++ 11] 在obj销毁前，ownership先转移一下。                                                              // 由于std::move会导致obj read-only，从而禁止std::move操作，所以前面还要加上mutable去掉read-only限制
 		});
 	}
 
@@ -649,7 +650,8 @@ seastar::lw\_shared_ptr<T>：更轻量级，不支持多态
 举例：
 
 	seastar::future<> slow_incr(int i) {
-		return seastar::async([i] {    //直接开coroutine， i存在coroutine的堆栈里seastar::sleep(10ms).get(); //阻塞点（blocking point），从该点切出，10ms后再切回来，继续执行后面的语句// We get here after the 10ms of wait, i is still available.
+		return seastar::async([i] {    //直接开coroutine， i存在coroutine的堆栈里seastar::sleep(10ms).get(); //阻塞点（blocking point），从该点切出，10ms后再切回来，继续执行后面的语句
+		// We get here after the 10ms of wait, i is still available.
 			return i + 1;                      // 此时，i依然在coroutine的堆栈中
 		});
 	}
@@ -666,9 +668,9 @@ seastar::lw\_shared_ptr<T>：更轻量级，不支持多态
 开启一系列异步操作，然后等待它们执行完毕。
 
 	seastar::future<> service_loop();
-		seastar::future<> f() {
-			return seastar::parallel_for_each(boost::irange<unsigned>(0, seastar::smp::count),[] (unsigned c) {
-				return seastar::smp::submit_to(c, service_loop); // 提交到每个posix thread（即核）上执行
+	seastar::future<> f() {
+		return seastar::parallel_for_each(boost::irange<unsigned>(0, seastar::smp::count),[] (unsigned c) {
+			return seastar::smp::submit_to(c, service_loop); // 提交到每个posix thread（即核）上执行
 		});
 	}
 
@@ -708,7 +710,8 @@ seastar的shard网络堆栈是指，每个posix thread处理一部分连接，�
 
 举例：
 
-	seastar::future<> service_loop();seastar::future<> f() {
+	seastar::future<> service_loop();
+	seastar::future<> f() {
 		return seastar::parallel_for_each(boost::irange<unsigned>(0, seastar::smp::count),[] (unsigned c) {
 			return seastar::smp::submit_to(c, service_loop);
 		});
@@ -764,9 +767,9 @@ seastar的shard网络堆栈是指，每个posix thread处理一部分连接，�
 	network_stack_registrator::network_stack_registrator(sstring name,  
 	      boost::program_options::options_description opts,        
 	      std::function<future<std::unique_ptr<network_stack>>(options opts)> factory,
-	      bool make_default) {    
-				network_stack_registry::register_stack(name, opts, factory, make_default);
-	}
+	      bool make_default) {
+	      		network_stack_registry::register_stack(name, opts, factory, make_default);
+			}
 
 工厂factory传给了方法network\_stack\_registry::register_stack：
 
@@ -792,14 +795,16 @@ slave posix thread的表中存入（"posix", posix\_ap\_network\_stack::create�
 （2）seastar创建每个posix thread后开始执行初始化配置，即调用reactor::configure：
 
 	void reactor::configure(boost::program_options::variables_map vm) {    
-		auto network_stack_ready = vm.count("network-stack")        ? network_stack_registry::create(sstring(vm["network-stack"].as<std::string>()), vm)        : network_stack_registry::create(vm);    
+		auto network_stack_ready = vm.count("network-stack")?
+		network_stack_registry::create(sstring(vm["network-stack"].as<std::string>()), vm):
+		network_stack_registry::create(vm);    
 		network_stack_ready.then([this] (std::unique_ptr<network_stack> stack) {        
 			_network_stack_ready_promise.set_value(std::move(stack));    
 		});    
 		......
 	}
 
-（2.1）首先判断是否配置指定了network-stack，如果没有使用缺省的，即（1）中的“posix”，调用network\_stack\_registry::create()创建ready future，这里的create就是个根据name（="posix"）去查（1）中的_map表，然后执行create。
+（2.1）首先判断是否配置指定了network-stack，如果没有指定，则使用缺省的，即（1）中的“posix”，调用network\_stack\_registry::create()创建ready future，这里的create就是个根据name（="posix"）去查（1）中的_map表，然后执行create。
 也就是main posix thread调用posix\_network\_stack::create创建ready future，这个future绑定的网络堆栈是posix\_network\_stack:
 
 	class posix_network_stack : public network_stack {
@@ -843,7 +848,11 @@ slave posix thread调用posix\_ap\_network\_stack::create创建ready future，�
 		return server_socket(_network_stack->listen(sa, opt));
 	}
 
-这里调用的是网络堆栈的listen，也就是说，master posix thread调用的是posix\_network\_stack::listen，没有端口复用时，最终调用的是reactor::posix\_listen（）slave posix thread调用的是posix\_ap\_network\_stack::listen，没有端口复用时，没有listen ！
+这里调用的是网络堆栈的listen，也就是说，
+
+master posix thread调用的是posix\_network\_stack::listen，没有端口复用时，最终调用的是reactor::posix\_listen（）
+
+slave posix thread调用的是posix\_ap\_network\_stack::listen，没有端口复用时，没有listen ！
 
 ## 4.7 日志（log）
 
@@ -902,7 +911,7 @@ seastar::logger缺省日志级别为INFO，即仅输出ERROR, WARN, INFO日志�
 
 # 5 seastar源码阅读（三）
 
-## 5.1 futhre和promise
+## 5.1 future和promise
 
 理解future和promise的关系，需要从两个接口入手： promise的接口get\_future和future的构造函数
 
@@ -918,7 +927,7 @@ seastar::logger缺省日志级别为INFO，即仅输出ERROR, WARN, INFO日志�
 	    _promise->_future = this;
 	}
 
-promise::get\_future()接口返回一个future对象，入参为promise对象。
+promise::get\_future()接口创建并返回一个future对象，入参为当前promise对象。
 
 future::future()接口将入参promise对象pr与成员对象\_promise绑定，同时，\_promise的成员对象\_future与当前的future对象绑定，即完成promise对象与future对象的相互绑定。
 
@@ -928,7 +937,7 @@ future::future()接口将入参promise对象pr与成员对象\_promise绑定，�
 
 根据future::then()的实现，
 
-（1）如果该future对象是available的（即ready future），且无强占发生，那么立即执行then（）接口参数中的lambda
+（1）如果该future对象是available的（即ready future），且无抢占发生，那么立即执行then（）接口参数中的lambda
 
 （2）否则创建一个promise对象，调用promise::get\_future()，获得一个新的future对象（注：参见前面future和promise的关系分析），然后执行future::schedule()，最后返回新的future对象。
 
@@ -953,7 +962,7 @@ future4 = future3.then(lambda3)
 	    }
 	}
 
-首先判断该future对象是available的（即ready future），如果是，调用apply.hh中的apply()接口，立即执行func；
+首先判断该future对象是否为available的（即ready future），如果是，调用apply.hh中的apply()接口，立即执行func；
 否则调用promise::schedule()接口，解除promise对象与future对象之间的相互绑定。
 
 继续追踪promise::schedule()接口：
@@ -1010,15 +1019,15 @@ future4 = future3.then(lambda3)
 
 看起来好像是：我们先执行lambda1，然后执行lambda2，然后执行lambda3，而真实的运行环境却通常是这样的：
 
-程序运行到此，先执行futhre_1.then，将lambda1封装成一个task抛出，返回future2；
+程序运行到此，先执行future1.then，将lambda1封装成一个task抛出，返回future2；
 
-然后执行futhre_2.then，将lambda2封装成一个task抛出，返回future3；
+然后执行future2.then，将lambda2封装成一个task抛出，返回future3；
 
-然后执行futhre_3.then，将lambda3封装成一个task抛出，返回future4；
+然后执行future3.then，将lambda3封装成一个task抛出，返回future4；
 
 这行代码执行完，返回的是future4，而此时此刻lambda1，lambda2，lambda3一个都没执行！
 
-为什么会这样呢？真实的原因是，所有的并行语言、框架都在尽力追求一种复合人类思维习惯的表达方式，尽可能用串行的语句来表达并行的逻辑（虽然上面算不上并行，仅仅是异步和序关系）。
+为什么会这样呢？真实的原因是，所有的并行语言、框架都在尽力追求一种符合人类思维习惯的表达方式，尽可能用串行的语句来表达并行的逻辑（虽然上面算不上并行，仅仅是异步和序关系）。
 
 上面链式操作真正想表达的是异步环境下的一种序关系：先执行lambda1，然后过一段时间，执行lambda2，再过一段时间，最后执行lambda3。
 
@@ -1088,6 +1097,6 @@ reactor::start\_epoll()  在这里\_epoll\_poller被创建！
 
 这两个poller都是负责磁盘异步IO的，其中
 
-io poller由事件触发，如果返回结果表明要重试，则回调压入重试队列。
+io poller由事件触发，如果返回结果表明要重试，则压入重试队列。
 aio poller主要负责批量处理磁盘异步IO请求，在主循环体中每次循环都会被调用到（reactor::poll\_once() => reactor::aio\_batch\_submit\_pollfn:poll() => reactor::flush\_pending\_aio()）
 被调用时，依次处理reactor::\_pending\_aio队列中的批量磁盘异步IO请求，之后起coroutine，处理io poller残留的、需要重试的磁盘异步IO请求队列reactor::\_pending_aio_retry。
