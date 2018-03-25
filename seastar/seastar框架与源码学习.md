@@ -650,7 +650,8 @@ seastar::lw\_shared_ptr<T>：更轻量级，不支持多态
 举例：
 
 	seastar::future<> slow_incr(int i) {
-		return seastar::async([i] {    //直接开coroutine， i存在coroutine的堆栈里seastar::sleep(10ms).get(); //阻塞点（blocking point），从该点切出，10ms后再切回来，继续执行后面的语句
+		return seastar::async([i] {    //直接开coroutine， i存在coroutine的堆栈里
+		seastar::sleep(10ms).get(); //阻塞点（blocking point），从该点切出，10ms后再切回来，继续执行后面的语句
 		// We get here after the 10ms of wait, i is still available.
 			return i + 1;                      // 此时，i依然在coroutine的堆栈中
 		});
