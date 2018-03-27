@@ -230,7 +230,7 @@ reactor建立一组poller，每个poller负责一类事件，比如，网络IO�
 
 seastar将event的处理（handler）封装进了task，在task层统一，接收统一调度。
 
-每个线程拥有一个reactor（即引擎engine）。线程的主体循环在reactor::run。 
+每个posix thread拥有一个reactor（即引擎engine）。posix thread的主体循环在reactor::run。 
 
 ## 2.5  /p/f/c/t
 
