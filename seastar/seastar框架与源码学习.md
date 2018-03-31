@@ -80,6 +80,12 @@
 
 6 核间消息传递
 
+6.1 入口与流程
+
+6.2 消息发送
+
+6.3 消息处理
+
 7 四个poller
 
 7.1 epoll poller
@@ -88,6 +94,7 @@
 
 7.3 io poller 和 aio poller
 
+8 空闲休眠机制
 
 # 1 基础知识
 
@@ -1036,6 +1043,8 @@ future4 = future3.then(lambda3)
 
 # 6 核间消息传递
 
+## 6.1 入口与流程
+
 应用层入口：smp::submit_to()
 
 smp::submit\_to（）向指定核传递消息（提交一个回调，是一个临时对象），实际是通过smp\_message\_queue::submit()放到响应的队列中（核之间交互的收发队列，二维表），此刻，消息（or回调）已经被转换成一个future（参见reactor.hh:372 smp\_message\_queue::submit()的实现）
@@ -1048,6 +1057,105 @@ async\_work\_item::complete()（注：async\_work\_item继承自纯虚work\_item
 这个轮询是在reactor::run()主循环中被调用，每次循环至少调用一次（check\_for\_work => reactor::poll\_once, pure\_check\_for\_work => reactor::pure\_poll\_once）
 
 消息的处理（即回调的执行）发生在reactor::run\_some\_tasks（）中。
+
+## 6.2 消息发送
+
+消息发送即消息提交，入口smp::submit\_to()，定义为：
+	
+	template <typename Func>
+	static futurize_t<std::result_of_t<Func()>> smp::submit_to(unsigned t, Func&& func)
+
+下面仅考虑不同核间消息发送。
+
+smp拥有n x n的收发队列二维数组，n为核数，组成员类型为smp\_message\_queue：static smp\_message\_queue** \_qs;
+
+smp首先将消息提交给消息队列 smp::\_qs[ 目的核 ][ 当前核 ]，即发送地址为当前核，接收地址为目的核，提交方式为调用smp\_message\_queue::submit()接口：
+	
+	futurize_t<std::result_of_t<Func()>> smp_message_queue：submit(Func&& func) {
+	    auto wi = std::make_unique<async_work_item<Func>>(*this, std::forward<Func>(func));
+	    auto fut = wi->get_future();
+	    submit_item(std::move(wi));
+	    return fut;
+	}
+    
+这个接口先将func封装进一个async\_work\_item的智能指针，然后调用smp\_message\_queue::submit\_item()将智能指针提交给临时（pending）队列
+smp\_message\_queue::\_tx.a.pending\_fifo：
+
+    std::deque<work_item*> pending_fifo
+    
+一个普通的双向队列。如果临时队列长度达到上限（水桶满），则批量移至
+smp_message_queue::_pending：
+
+	void smp_message_queue::submit_item(std::unique_ptr<smp_message_queue::work_item> item) {
+	    _tx.a.pending_fifo.push_back(item.get());
+	    item.release();
+	    if (_tx.a.pending_fifo.size() >= batch_size) {
+	        move_pending();
+	    }
+	}
+
+	void smp_message_queue::move_pending() {
+	    auto begin = _tx.a.pending_fifo.cbegin();
+	    auto end = _tx.a.pending_fifo.cend();
+	    end = _pending.push(begin, end);
+	    if (begin == end) {
+	        return;
+	    }
+	    auto nr = end - begin;
+	    _pending.maybe_wakeup();
+	    _tx.a.pending_fifo.erase(begin, end);
+	    _current_queue_length += nr;
+	    _last_snt_batch = nr;
+	    _sent += nr;
+	}
+
+注意，这里水桶高度（smp\_message\_queue::batch\_size）设定为16。
+
+特别地，smp\_message\_queue:\_pending是一个boost::lockfree::spsc\_queue队列，即lock-free，单生产者单消费者的队列。
+
+smp\_message\_queue::move\_pending()是该队列的生产者。
+
+## 6.3 消息处理
+
+在消息的接收端，即接收核，需要遍历所有从其它核发送来的消息队列smp\_message\_queue，即smp::\_qs[ 当前核 ][ 发送核 ]。
+
+如果有消息到达，则开始处理，入口为smp\_message\_queue::process\_incoming()
+
+	size_t smp_message_queue::process_incoming() {
+	    auto nr = process_queue<prefetch_cnt>(_pending, [this] (work_item* wi) {
+	        wi->process();
+	    });
+	    _received += nr;
+	    _last_rcv_batch = nr;
+	    return nr;
+	}
+
+直接调用smp\_message\_queue::process\_queue()对boost::lockfree::spsc\_queue队列\_pending进行处理。
+
+调用一次smp\_message\_queue::process\_queue()，最多处理128个核间消息（这里，消息从队列拷贝到本地内存，采用了预取技术），超过的部分留到下次处理。
+
+	template<size_t PrefetchCnt, typename Func>
+	size_t smp_message_queue::process_queue(lf_queue& q, Func process) {
+	    // copy batch to local memory in order to minimize
+	    // time in which cross-cpu data is accessed
+	    work_item* items[queue_length + PrefetchCnt];
+	    work_item* wi;
+	    if (!q.pop(wi))
+	        return 0;
+	    // start prefecthing first item before popping the rest to overlap memory
+	    // access with potential cache miss the second pop may cause
+	    prefetch<2>(wi);
+	    auto nr = q.pop(items);
+	    std::fill(std::begin(items) + nr, std::begin(items) + nr + PrefetchCnt, nr ? items[nr - 1] : wi);
+	    unsigned i = 0;
+	    do {
+	        prefetch_n<2>(std::begin(items) + i, std::begin(items) + i + PrefetchCnt);
+	        process(wi);
+	        wi = items[i++];
+	    } while(i <= nr);
+	
+	    return nr + 1;
+	}
 
 # 7 四个poller
 
@@ -1101,3 +1209,105 @@ reactor::start\_epoll()  在这里\_epoll\_poller被创建！
 io poller由事件触发，如果返回结果表明要重试，则压入重试队列。
 aio poller主要负责批量处理磁盘异步IO请求，在主循环体中每次循环都会被调用到（reactor::poll\_once() => reactor::aio\_batch\_submit\_pollfn:poll() => reactor::flush\_pending\_aio()）
 被调用时，依次处理reactor::\_pending\_aio队列中的批量磁盘异步IO请求，之后起coroutine，处理io poller残留的、需要重试的磁盘异步IO请求队列reactor::\_pending_aio_retry。
+
+# 8 空闲休眠机制
+
+所谓空闲休眠（idle-sleep）机制，是指系统在空闲情况下，应该让出CPU控制权，降低对CPU的占用率。如果此机制，系统CPU负载可能一直维持在100%，空耗CPU和电能。
+
+必须指出，seastar当前版本对idle-sleep的实现并不完美。
+
+seastar的idle-sleep机制最终是建立在epoll_pwait上的，该接口定义为：
+
+	int epoll_pwait(int epfd, struct epoll_event *events, int maxevents, int timeout, const sigset_t *sigmask)
+
+参数timeout表示，如果一直无事件发生，操作系统必须在多长时间内返回。单位是毫秒。
+
+epoll\_wait/epoll\_pwait事实上留给了应用一个实现idle-sleep的技巧：如果无事件发生，应用可以在timeout时长内，将CPU还给操作系统，即应用处于真正的、不被执行的空闲状态。
+
+seastar的idle-sleep机制在主循环中，每个loop都需要检查的：
+	
+	while (true) {
+	        .... 
+	        if (check_for_work()) {
+	            if (idle) {
+	                _total_idle += idle_end - idle_start;
+	                account_idle(idle_end - idle_start);
+	                idle_start = idle_end;
+	                idle = false;                         // 如果有任务待执行，而idle标志曾被置位，则立即无条件复位。也就是退出idle态（这是应用层的idle态，而不是进程的）
+	            }
+	        } else {
+	            idle_end = sched_clock::now(); // 如果没有任务，则更新一下idle计时器idle_end
+	            if (!idle) {
+	                idle_start = idle_end;
+	                idle = true;  // 从非idle态，进入idle态，同时初始化idle计时器idle_start，即开始计时
+	            }
+	            bool go_to_sleep = true; // 是否允许进入休眠的开关，初始为开
+	            try {
+	                // we can't run check_for_work(), because that can run tasks in the context
+	                // of the idle handler which change its state, without the idle handler expecting
+	                // it.  So run pure_check_for_work() instead.
+	                auto handler_result = _idle_cpu_handler(pure_check_for_work);
+	                go_to_sleep = handler_result == idle_cpu_handler_result::no_more_work; // 再次更新一下休眠开关，根据当前实现，结果总是开
+	            } catch (...) {
+	                report_exception("Exception while running idle cpu handler", std::current_exception());
+	            }
+	            if (go_to_sleep) {
+	                internal::cpu_relax();
+	                if (idle_end - idle_start > _max_poll_time) {     // 如果idle计时器达到门限，也就是进入idle一段时间后，执行sleep操作
+	                    // Turn off the task quota timer to avoid spurious wakeups
+	                    struct itimerspec zero_itimerspec = {};
+	                    _task_quota_timer.timerfd_settime(0, zero_itimerspec);
+	                    auto start_sleep = sched_clock::now();
+	                    sleep();           // 执行sleep
+	                    // We may have slept for a while, so freshen idle_end
+	                    idle_end = sched_clock::now();
+	                    add_nonatomically(_stall_detector_missed_ticks, uint64_t((start_sleep - idle_end)/_task_quota));
+	                    _task_quota_timer.timerfd_settime(0, task_quote_itimerspec);
+	                }
+	            } else {
+	                // We previously ran pure_check_for_work(), might not actually have performed
+	                // any work.
+	                check_for_work();
+	            }
+	            t_run_completed = idle_end;
+	        }
+	    }
+	
+	void
+	reactor::sleep() {
+	    for (auto i = _pollers.begin(); i != _pollers.end(); ++i) {
+	        auto ok = (*i)->try_enter_interrupt_mode();  // reactor::io_pollfn::try_enter_interrupt_mode这个poller有问题
+	        if (!ok) { // 如果返回false，则进程不可能休眠，因为下面直接返回了！
+	            while (i != _pollers.begin()) {
+	                (*--i)->exit_interrupt_mode();
+	            }
+	            return;
+	        }
+	    }
+	    wait_and_process(-1, &_active_sigmask);           // 通过epoll_pwait，将CPU交还给操作系统，即应用开始休眠，直至事件到达，或者信号触发，或者超时（这里不可能超时！）
+	    for (auto i = _pollers.rbegin(); i != _pollers.rend(); ++i) {
+	        (*i)->exit_interrupt_mode();
+	    }
+	}
+	
+为了满足seastar对idle-sleep机制的需求（https://github.com/scylladb/seastar/issues/65），seastar对每个poller新增了两个接口：try\_enter\_interrupt\_mode和exit\_interrupt_mode。
+前者用来判断是否可以进入sleep（seastar名称上模仿了中断模式），后者用来执行在唤醒后（即退出sleep后）的动作。
+
+如果所有poller同意进入sleep，那通过epoll\_pwait开始休眠；否则，继续下次循环。
+
+来看磁盘异步IO的接口：
+
+    virtual bool reactor::io_pollfn::try_enter_interrupt_mode() override {
+        // aio cannot generate events if there are no inflight aios;
+        // but if we enabled _aio_eventfd, we can always enter
+        return _r.my_io_queue->requests_currently_executing() > 0 || _r._aio_eventfd;  
+    }
+    virtual void reactor::io_pollfn::exit_interrupt_mode() override {
+        // nothing to do
+    }
+    
+注意，对此poller而言，如果我们没有开启磁盘异步IO，那么try\_enter\_interrupt\_mode总是返回false，也就是说seastar永远不会进入休眠！
+这是缺陷之一。
+
+缺陷之二在于调用wait_and_process()时给的参数上，第一个参数timeout = -1，该参数最终作为epoll\_pwait的timeout参数。这将导致seastar被永远阻塞在此，直至事件发生，或者信号发生。
+如果seastar的应用非网络事件驱动，没有网络IO发生，那将是灾难性的！
