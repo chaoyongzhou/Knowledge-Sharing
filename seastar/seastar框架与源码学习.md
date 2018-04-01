@@ -1317,7 +1317,7 @@ seastar的idle-sleep机制在主循环中，每个loop都需要检查的：
 缺陷之二在于，调用wait\_and\_process()时给的参数。第一个参数timeout = -1，最终作为epoll\_pwait的timeout参数。这将导致seastar被永远阻塞在此，直至事件发生，或者信号发生。
 如果seastar的应用非网络事件驱动，没有网络IO发生，那将是灾难性的！
 
-9 任务配额定时器
+# 9 任务配额定时器
 
 首先强调：
 每个reactor单例运行在一个posix thread上，该posix thread绑定（pin）到一个物理核；每个reactor单例在构造时，再创建一个posix thread，
@@ -1326,7 +1326,7 @@ seastar的idle-sleep机制在主循环中，每个loop都需要检查的：
 任务配额定时器：reactor::\_task\_quota\_timer
 任务配合定时器posix thread: reactor::\_task\_quota\_timer\_thread
 
-9.1 任务配额定时器posix thread创建
+## 9.1 任务配额定时器posix thread创建
 
 reactor构造函数中，创建任务配额定时器posix thread：
 
@@ -1337,17 +1337,17 @@ reactor构造函数中，创建任务配额定时器posix thread：
 
 入口函数reactor::task\_quota\_timer\_thread\_fn陷于无限循环，条件为reactor posix thread还活着。
 
-9.2 任务配额定时器posix thread退出
+## 9.2 任务配额定时器posix thread退出
 
 任务配合定时器posix thread退出发生在reactor单例销毁时，即reactor析构函数中。
 
 首先设置reactor posix thread状态为dying，然后等待任务配合定时器posix thread结束无限循环，退出。
 
-9.3 任务配额定时器工作模式
+## 9.3 任务配额定时器工作模式
 
 任务配额定时器posix thread的核心工作围绕任务配额定时器进行。
 
-9.3.1 任务配额定时器的实现原理
+### 9.3.1 任务配额定时器的实现原理
 
 实现原理基于Linux Kernel 2.6.25开始支持的三个系统调用：
 
@@ -1397,7 +1397,7 @@ seastar没有用epoll方式来管理定时器触发，而是用读阻塞文件�
 
 必须指出，任务配额定时器必须运行于Linux Kernel 2.6.27及以上版本，因为在Linux Kernel 2.6.26，2.6.25版本中timerfd\_create接口的标志位参数只支持零值。
 
-9.3.2 任务配额定时器的使用范围
+### 9.3.2 任务配额定时器的使用范围
 
 任务配合定时器主要用于统计计数器和报告（输出）。
 
