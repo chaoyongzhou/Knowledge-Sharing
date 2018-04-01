@@ -96,6 +96,8 @@
 
 8 空闲休眠机制
 
+9 任务配额定时器
+
 # 1 基础知识
 
 ## 1.1 并发与并行与分布
@@ -1314,3 +1316,131 @@ seastar的idle-sleep机制在主循环中，每个loop都需要检查的：
 
 缺陷之二在于，调用wait\_and\_process()时给的参数。第一个参数timeout = -1，最终作为epoll\_pwait的timeout参数。这将导致seastar被永远阻塞在此，直至事件发生，或者信号发生。
 如果seastar的应用非网络事件驱动，没有网络IO发生，那将是灾难性的！
+
+9 任务配额定时器
+
+首先强调：
+每个reactor单例运行在一个posix thread上，该posix thread绑定（pin）到一个物理核；每个reactor单例在构造时，再创建一个posix thread，
+专门负责此reactor单例关联的一个任务配额定时器。
+
+任务配额定时器：reactor::\_task\_quota\_timer
+任务配合定时器posix thread: reactor::\_task\_quota\_timer\_thread
+
+9.1 任务配额定时器posix thread创建
+
+reactor构造函数中，创建任务配额定时器posix thread：
+
+	_task_quota_timer_thread(&reactor::task_quota_timer_thread_fn, this)
+
+任务配额定时器posix thread的入口函数为reactor::task\_quota\_timer\_thread\_fn。上面参数中的this（即reactor对象）怀疑是该posix thread创建时，继承了reactor单例所在的posix thread属性，
+即，绑定到同一个物理核上。
+
+入口函数reactor::task\_quota\_timer\_thread\_fn陷于无限循环，条件为reactor posix thread还活着。
+
+9.2 任务配额定时器posix thread退出
+
+任务配合定时器posix thread退出发生在reactor单例销毁时，即reactor析构函数中。
+
+首先设置reactor posix thread状态为dying，然后等待任务配合定时器posix thread结束无限循环，退出。
+
+9.3 任务配额定时器工作模式
+
+任务配额定时器posix thread的核心工作围绕任务配额定时器进行。
+
+9.3.1 任务配额定时器的实现原理
+
+实现原理基于Linux Kernel 2.6.25开始支持的三个系统调用：
+
+[timerfd_create](http://man7.org/linux/man-pages/man2/timerfd_create.2.html)
+
+	#include <sys/timerfd.h>
+	
+	int timerfd_create(int clockid, int flags);
+	
+	int timerfd_settime(int fd, int flags, onst struct itimerspec *new_value, struct itimerspec *old_value);
+	
+	int timerfd_gettime(int fd, struct itimerspec *curr_value);
+
+其含义是说，可以把定时器交给操作系统，定时器被触发时，向指定的文件描述符写入非零值（触发次数），即到期通知交给指定的文件描述符。
+
+这个机制的好处是，可以用select/poll/epoll的机制来管理定时器触发，而不用自己在用户空间轮询、或者信号中断的方式，应用层自主性更强、更便捷。
+
+seastar没有用epoll方式来管理定时器触发，而是用读阻塞文件描述符的方式。
+
+	_task_quota_timer(file_desc::timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC))
+
+在创建文件描述符时，标志位没有置TFD_NONBLOCK，亦即reactor::task\_quota\_timer\_thread\_fn()的无限循环体内，下面语句是阻塞点。
+
+	_task_quota_timer.read(&events, 8);
+
+那么该阻塞点是什么解除的？如何解除的？
+
+答案在reactor posix thread的主循环中。当idle-sleep机制发现需要进入休眠后，先关闭任务配额定时器（超时时间清零，内核不往文件描述符写入），
+然后在休眠结束后，设定任务配额定时器，定时器超时触发时往文件描述符写入，阻塞点解除。
+
+	if (go_to_sleep) {
+        internal::cpu_relax();
+        if (idle_end - idle_start > _max_poll_time) {
+            // Turn off the task quota timer to avoid spurious wakeups
+            struct itimerspec zero_itimerspec = {};
+            _task_quota_timer.timerfd_settime(0, zero_itimerspec); // 关闭定时器
+            auto start_sleep = sched_clock::now();
+            sleep(); // 休眠
+            // We may have slept for a while, so freshen idle_end
+            idle_end = sched_clock::now();
+            add_nonatomically(_stall_detector_missed_ticks, uint64_t((start_sleep - idle_end)/_task_quota));
+            _task_quota_timer.timerfd_settime(0, task_quote_itimerspec); // 设定定时器
+        }
+    }
+            
+注意，任务配额定时器的阻塞能力，还可以被用于两个posix thread之间的同步。在此不表。
+
+必须指出，任务配额定时器必须运行于Linux Kernel 2.6.27及以上版本，因为在Linux Kernel 2.6.26，2.6.25版本中timerfd\_create接口的标志位参数只支持零值。
+
+9.3.2 任务配额定时器的使用范围
+
+任务配合定时器主要用于统计计数器和报告（输出）。
+
+* _tasks_processed:  当前reactor单例已处理的任务总数。
+
+实现方式估计如下（还未完全确认，猜的）:
+
+	reactor::task_queue::task_queue()
+	
+	    sm::make_counter("tasks_processed", _tasks_processed,
+	            sm::description("Count of tasks executing on this queue; indicates together with runtime_ms indicates length of tasks"),
+	            {group_label}),
+	
+	void reactor::register_metrics()
+	
+		sm::make_derive("tasks_processed", std::bind(&reactor::tasks_processed, this), sm::description("Total tasks processed")),
+	
+	uint64_t
+	reactor::tasks_processed() const {
+	    uint64_t ret = 0;
+	    for (auto&& tq : _task_queues) {
+	        ret += tq->_tasks_processed;
+	    }
+	    return ret;
+	}
+
+\_tasks\_processed初始值为0，累加reactor::tasks\_processed()的结果，即任务队列中每个子任务队列完成的任务数之和。
+
+
+* \_polls: reactor主循环的循环次数。
+
+ 注意：如果在一次循环中，一直有任务处理、不进入下次循环，那么该计数器就不会发生变动，此为应该尽力避免的事情。
+
+* \_tasks\_processed\_stalled: 无任务处理时，任务配额定时器超时次数。一旦reactor有任务处理，该计数器归零。
+
+来看任务配额定时器posix thread循环主体的主要工作方式：
+
+首先检查\_tasks\_processed和\_polls与前值对比是否发生变动。
+
+若是，则更新前值为当前值，\_tasks\_processed\_stalled归零，上报门限值恢复
+
+若否，则\_tasks\_processed\_stalled自增一，判断是否达到上报门限值。如果已达到，则首先向reactor posix thread发送信号（SIGRTMIN + 1），触发reactor posix thread
+调用reactor::block\_notifier()，打印堆栈（backtrace）信息；然后将上报门限值提升一倍（supress手段，用来降低上报频度）。
+
+由此可见，任务配额定时器及其posix thread是一种debug手段，实际应用环境中，可以考虑拿掉它，至少能减少一个posix thread，降低两个posix thread竞争同一个核的风险。
+          
