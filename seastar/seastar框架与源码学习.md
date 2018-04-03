@@ -2011,9 +2011,9 @@ seastar没有用epoll方式来管理定时器触发，而是用读阻塞文件�
 
 借用两张网图简单描述NUMA拓扑结构：
 
-[NUMA 架构]()
+[NUMA 架构](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/seastar/NUMA_01.png)
 
-[NUMA 服务器]()
+[NUMA 服务器](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/seastar/NUMA_02.png)
 
 NUMA中的一个节点（node）由若干CPU和一个内存（memory）组成，节点之间的内存访问通过NUMA内置的互联模块进行。节点访问本地的内存更快。
 
