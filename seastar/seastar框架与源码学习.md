@@ -86,7 +86,7 @@
 
 6.3 消息处理
 
-7 四个poller
+7 十个poller
 
 7.1 epoll poller
 
@@ -94,9 +94,31 @@
 
 7.3 io poller 和 aio poller
 
+7.4 signal poller
+
+7.5 batch flush poller
+
+7.6 execution stage poller
+
+7.7 syscall poller
+
+7.8 drain free page poller
+
+7.9 lowres timer poller
+
 8 空闲休眠机制
 
 9 任务配额定时器
+
+10 内存管理
+
+10.1 NUMA拓扑
+
+10.2 虚拟内存初始化
+
+10.3 物理内存与虚拟内存绑定
+
+10.4 运用
 
 # 1 基础知识
 
@@ -1161,9 +1183,11 @@ smp\_message\_queue::move\_pending()是该队列的生产者。
 	    return nr + 1;
 	}
 
-# 7 四个poller
+# 7 十个poller
 
-seastar维护四个poller：epoll poller（可选）、smp poller、io poller、aio poller
+seastar维护十个poller。
+
+seastar通过轮询机制，将网络IO、磁盘异步IO、核间通信、信号处理、定时器处理、非阻塞系统调用处理、同一函数批量调用处理、空闲页回收处理等，抽象并统一到poller上来。
 
 ## 7.1 epoll poller
 
@@ -1208,11 +1232,546 @@ reactor::start\_epoll()  在这里\_epoll\_poller被创建！
 
 ## 7.3 io poller 和 aio poller
 
+### 7.3.1 基本流程
+
 这两个poller都是负责磁盘异步IO的，其中
 
 io poller由事件触发，如果返回结果表明要重试，则压入重试队列。
 aio poller主要负责批量处理磁盘异步IO请求，在主循环体中每次循环都会被调用到（reactor::poll\_once() => reactor::aio\_batch\_submit\_pollfn:poll() => reactor::flush\_pending\_aio()）
 被调用时，依次处理reactor::\_pending\_aio队列中的批量磁盘异步IO请求，之后起coroutine，处理io poller残留的、需要重试的磁盘异步IO请求队列reactor::\_pending_aio_retry。
+
+### 7.3.2 实现原理
+
+异步IO底层接口由四个系统调用组成：
+
+	int io_setup(unsigned nr_events, aio_context_t *ctx_idp);
+	
+	int io_destroy(aio_context_t ctx_id);
+	
+	int io_getevents(aio_context_t ctx_id, long min_nr, long nr, struct io_event *events, struct timespec *timeout);
+	
+	int io_submit(aio_context_t ctx_id, long nr, struct iocb **iocbpp);
+
+其中，
+
+io\_setup：创建支持若干个异步事件的上下文。
+
+io\_destroy：销毁上下文。
+
+io\_getevents：获取已完成的异步事件列表，指定事件数的最小值和最大值，指定本获取操作的超时事件。注意：返回值为实际获取的已完成异步事件数，可能比设定的最小值小。
+
+io\_submit：提交若干个异步事件给上下文。
+
+特别地，以上四个系统调用没有glibc的封装接口，因此需要采用syscall的方式来调用，比如，
+
+	syscall(SYS_io_setup, nr_events, io_context)
+
+reactor在构造时，创建异步IO的上下文reactor::\_io\_context，支持128个异步IO事件。
+
+### 7.3.3 应用接口
+
+seastar针对posix文件系统，实现异步读写IO应用层接口posix\_file\_impl::read\_dma()，posix\_file\_impl::write_dma()，有两套，一套是单指令单数据流（SISD），一套是单指令多数据流（SIMD）。
+
+posix\_file\_impl的读写接口通过reactor::submit\_io\_read()和reactor::submit\_io\_write()，移交给reactor来处理。
+
+	template <typename Func>
+	future<io_event>
+	reactor::submit_io_read(const io_priority_class& pc, size_t len, Func prepare_io) {
+	    ++_io_stats.aio_reads;
+	    _io_stats.aio_read_bytes += len;
+	    return io_queue::queue_request(_io_coordinator, pc, len, std::move(prepare_io));
+	}
+	
+	template <typename Func>
+	future<io_event>
+	reactor::submit_io_write(const io_priority_class& pc, size_t len, Func prepare_io) {
+	    ++_io_stats.aio_writes;
+	    _io_stats.aio_write_bytes += len;
+	    return io_queue::queue_request(_io_coordinator, pc, len, std::move(prepare_io));
+	}
+
+reactor透过io\_queue::queue\_request()，将异步读写IO操作通过核间消息传递（smp::submit\_to）的方式，提交给对应的shared所在的核。
+
+> 问：shared id和cpu id是如何对应的？
+> 
+> 答：（还需要捋捋初始化部分，即configure）
+
+所在核收到异步读写IO操作的请求后，调用reactor::submit\_io()，正式提交面向底层文件系统的异步IO操作。
+
+我们来看实现方式和数据流转。
+
+### 7.3.4 实现方式
+
+reactor::submit\_io() 首先从空闲的iocb堆栈中取出一个，构造异步IO请求。构造接口为面向单指令单数据流的make\_read\_iocb，make\_write\_iocb，
+以及面向单指令多数据流的make\_readv\_iocb，make\_writev\_iocb。比如，
+	
+	inline
+	::iocb
+	make_read_iocb(int fd, uint64_t offset, void* buffer, size_t len) {
+	    ::iocb iocb{};
+	    iocb.aio_lio_opcode = IOCB_CMD_PREAD;  // 异步读指令
+	    iocb.aio_fildes = fd;
+	    iocb.aio_offset = offset;
+	    iocb.aio_buf = reinterpret_cast<uintptr_t>(buffer);
+	    iocb.aio_nbytes = len;
+	    return iocb;
+	}
+	
+	inline
+	::iocb
+	make_write_iocb(int fd, uint64_t offset, const void* buffer, size_t len) {
+	    ::iocb iocb{};
+	    iocb.aio_lio_opcode = IOCB_CMD_PWRITE; // 异步写指令
+	    iocb.aio_fildes = fd;
+	    iocb.aio_offset = offset;
+	    iocb.aio_buf = reinterpret_cast<uintptr_t>(buffer);
+	    iocb.aio_nbytes = len;
+	    return iocb;
+	}
+
+iocb的用户数据部填充为future。
+
+然后将iocb压入reactor::\_pending\_aio队列，提交完成。
+
+剩下的处理流程，请参考7.3.1。
+
+### 7.3.4 实际应用
+
+seastar将磁盘异步IO封装进了file类（file.hh），提供file::dma\_read()，file::dma\_write()等读写操作。
+
+## 7.4 signal poller
+
+signal poller主要负责处理信号。
+
+signo和handler通过接口reactor::signals::handle\_signal()绑定到表reactor::\_signal\_handlers中。
+
+seastar::\_pending\_signals是一个64比特位图，当信号signo被触发时，置相应的比特位为1。
+
+signal poller在reactor::run()中初始化，
+
+	poller sig_poller(std::make_unique<signal_pollfn>(*this));
+
+轮询最终落到reactor::signals::poll\_signal()接口。该接口检查位图，并执行比特位被置的对应的signo的handler，完成信号处理。
+
+Linux的信号分为可截获信号和不可截获信号两种。
+
+对于可截获信号，适当封装最终的信号处理函数，暴露给系统一个新的处理函数，这个新的处理函数只记录信号被触发这件事，而把最终的处理留到后面某个时机点，
+这是惯用的信号抑制和流程控制手段。
+
+seastar用到了两个信号：SIGRTMIN和SIGUSR1。
+
+SIGRTMIN在reactor::run()中初始化时被装载。主要面向定时器集合reactor::\_timers。
+
+SIGUSR1在thread\_pool（即coroutine pool）构造时被装载。主要面向系统调用队列。
+
+## 7.5 batch flush poller
+
+batch flush poller主要是负责输出流（outstream），特别是tcp流，的批量输出（发送）。
+
+其在reactor::run()中初始化，
+
+	poller batch_flush_poller(std::make_unique<batch_flush_pollfn>(*this));
+
+轮询最终落到reactor::flush\_tcp\_batches()接口。该接口逐一调用环形缓冲（circular buffer）reactor::\_flush\_batching中的输出流的poll\_flush接口。
+
+	circular_buffer<output_stream<char>* > _flush_batching;
+
+输出流通过接口add\_to\_flush\_poller()进入环形缓冲。
+
+	void add_to_flush_poller(output_stream<char>* os) {
+	    engine()._flush_batching.emplace_back(os);
+	}
+
+那么，接口add\_to\_flush\_poller()是什么时候被调用的呢？
+
+先看调用点：
+
+	template <typename CharType>
+	future<>
+	output_stream<CharType>::flush() {
+	    if (!_batch_flushes) {       // 输出流未开启批量输出
+	        if (_end) {
+	            _buf.trim(_end);
+	            _end = 0;
+	            return put(std::move(_buf)).then([this] {
+	                return _fd.flush();
+	            });
+	        } else if (_zc_bufs) {
+	            return zero_copy_put(std::move(_zc_bufs)).then([this] {
+	                return _fd.flush();
+	            });
+	        }
+	    } else { // 输出流开启批量输出
+	        if (_ex) { // 有异常，抛异常future
+	            // flush is a good time to deliver outstanding errors
+	            return make_exception_future<>(std::move(_ex));
+	        } else { // 无异常
+	            _flush = true;    // 置已输出标志
+	            if (!_in_batch) { // promise为空时（std::experimental::nullopt）
+	                add_to_flush_poller(this);  // 将输出流放入环形缓冲
+	                _in_batch = promise<>();  // 设置promise
+	            }
+	        }
+	    }
+	    return make_ready_future<>();
+	}
+
+上面outputstream::flush()的实现代码表明，输出流拥有一个是否开启批量输出功能的开关（output\_stream::\_batch\_flushes）。
+
+批量输出开关缺省为关，可以在输出流构造时指定：
+
+
+    output_stream::output_stream(data_sink fd, size_t size, bool trim_to_size = false, bool batch_flushes = false)
+        : _fd(std::move(fd)), _size(size), _trim_to_size(trim_to_size), _batch_flushes(batch_flushes) {}
+        
+再回头看看，轮询时调用output\_stream::poll\_flush接口发生了什么。
+
+	template <typename CharType>
+	void
+	output_stream<CharType>::poll_flush() {
+	    if (!_flush) {
+	        // flush was canceled, do nothing
+	        _flushing = false;
+	        _in_batch.value().set_value();
+	        _in_batch = std::experimental::nullopt;
+	        return;
+	    }
+	
+	    auto f = make_ready_future();
+	    _flush = false;
+	    _flushing = true; // make whoever wants to write into the fd to wait for flush to complete
+	
+	    if (_end) {
+	        // send whatever is in the buffer right now
+	        _buf.trim(_end);
+	        _end = 0;
+	        f = _fd.put(std::move(_buf));
+	    } else if(_zc_bufs) {
+	        f = _fd.put(std::move(_zc_bufs));
+	    }
+	
+	    f.then([this] {
+	        return _fd.flush();
+	    }).then_wrapped([this] (future<> f) {
+	        try {
+	            f.get();
+	        } catch (...) {
+	            _ex = std::current_exception();
+	        }
+	        // if flush() was called while flushing flush once more
+	        poll_flush();
+	    });
+	}
+	
+可以看到，首先是调用\_fd.put()，获得一个future，然后定义了两个有序的异步动作：先调用\_fd.flush()，然后把该接口（output_stream::poll\_flush）在调一次。
+
+也就是说，如果获得的future变成ready future，那么需要再flush一次。
+
+现在来看output\_stream::\_fd是什么。
+
+output_stream::\_fd为data\_sink对象。data\_sink类定义表明，它就是对智能指针std::unique\_ptr<data\_sink\_impl>的一个封装。
+	
+	class data_sink_impl {
+	public:
+	    virtual ~data_sink_impl() {}
+	    virtual temporary_buffer<char> allocate_buffer(size_t size) {
+	        return temporary_buffer<char>(size);
+	    }
+	    virtual future<> put(net::packet data) = 0;
+	    virtual future<> put(std::vector<temporary_buffer<char>> data) {
+	        net::packet p;
+	        p.reserve(data.size());
+	        for (auto& buf : data) {
+	            p = net::packet(std::move(p), net::fragment{buf.get_write(), buf.size()}, buf.release());
+	        }
+	        return put(std::move(p));
+	    }
+	    virtual future<> put(temporary_buffer<char> buf) {
+	        return put(net::packet(net::fragment{buf.get_write(), buf.size()}, buf.release()));
+	    }
+	    virtual future<> flush() {
+	        return make_ready_future<>();
+	    }
+	    virtual future<> close() = 0;
+	};
+	
+好了，现在我们能确定batch flush poller就是针对TCP网络数据包的批量发送：先将碎片化的待发送数据包攒一攒，然后一次全发送出去。
+
+为了回答“ 接口add\_to\_flush\_poller()是什么时候被调用的”，我们需要回答“接口outputstream::flush()是什么时候被调用的”这个问题。
+
+答应其实很简单：在需要输出流的时候！或者是在输出流被关闭的时候触发。
+
+也就是说，这个接口是根据需要，在seastar的应用层被主动调用的。
+
+## 7.6 execution stage poller
+
+### 7.6.1 目的
+
+execution stage poller是seastar提供的批量执行函数调用的方式，是一种优化手段。将相似的操作放在一起，可以增大指令的缓存命中率。
+
+更多背景细节，请参考：[executation stages](http://docs.seastar-project.org/master/group__execution-stages.html#details)
+
+### 7.6.2 实现
+
+execution stage poller在reactor::run()中初始化，
+
+	poller execution_stage_poller(std::make_unique<execution_stage_pollfn>());
+
+轮询最终落到execution\_stage\_manager::flush()接口。该接口逐一调用execution\_stage队列的flush接口。
+
+
+    bool execution_stage::flush() noexcept {
+        if (_empty || _flush_scheduled) {
+            return false;
+        }
+        _stats.tasks_scheduled++;
+        schedule(make_task(_sg, [this] {
+            do_flush();
+            _flush_scheduled = false;
+        }));
+        _flush_scheduled = true;
+        return true;
+    };
+    
+execution\_stage::flush()接口的核心是，创建一个任务，该任务在执行的时候调用concrete\_execution\_stage::do\_flush()。
+
+这里类concrete\_execution\_stage继承了类execution\_stage， 并实现了虚函数do\_flush()。
+
+
+    virtual void concrete_execution_stage::do_flush() noexcept override {
+        while (!_queue.empty()) {
+            auto& wi = _queue.front();
+            futurize<ReturnType>::apply(_function, unwrap(std::move(wi._in))).forward_to(std::move(wi._ready));
+            _queue.pop_front();
+            _stats.function_calls_executed++;
+
+            if (need_preempt()) {
+                _stats.tasks_preempted++;
+                break;
+            }
+        }
+        _empty = _queue.empty();
+    }
+    
+这个接口就是调用同一个函数\_function，灌入不同的参数。函数的每组参数（实参）压入队列\_queue中，成为队列的一个元素。
+
+先看函数\_function的设定。
+
+这是在concrete\_execution\_stage的构造函数中实现的。
+
+	explicit concrete_execution_stage::concrete_execution_stage(const sstring& name, scheduling_group sg, noncopyable_function<ReturnType (Args...)> f)
+	    : execution_stage(name, sg)
+	    , _function(std::move(f))
+	{
+	    _queue.reserve(flush_threshold);
+	}
+
+构造函数同时初始化化了实参队列的长度，即最多可压入128组实参。
+
+再看如何压入一组实参。
+
+这是通过重载“()”符实现的。
+
+	return_type operator()(typename internal::wrap_for_es<Args>::type... args) {
+	    _queue.emplace_back(std::move(args)...);
+	    _empty = false;
+	    _stats.function_calls_enqueued++;
+	    auto f = _queue.back()._ready.get_future();
+	    flush();
+	    return f;
+	}
+
+### 7.6.3 运用
+
+seastar提供了execution stage的使用接口：seastar::make\_execution\_stage()
+
+运用举例：
+
+	double do_something(int); // 假设在某处实现了一个函数do_something，输入为整数，输出为小数
+	
+	thread_local auto stage1 = seastar::make_execution_stage("execution-stage1", do_something); // 定义一个execution stage，执行函数指定为do_something
+	future<double> func1(int val) {
+	return stage1(val); // 在此处向上面定义的execution stage压入参数val，获得一个future并返回。注意此future并未ready，即执行函数还没有开始执行。
+	}
+
+## 7.7 syscall poller
+
+### 7.7.1 背景
+
+syscall poller与seastar的协程池（thread\_pool）相关，该协程池用来处理与POSIX文件系统、块设备文件系统等相关的异步IO系统调用。
+
+特别地，改协程池运行于一个独立的posix thread上。参见thread\_pool的构造函数：
+
+	thread_pool::thread_pool(sstring name) : _worker_thread([this, name] { work(name); }), _notify(pthread_self()) {
+	    engine()._signals.handle_signal(SIGUSR1, [this] { inter_thread_wq.complete(); });
+	}
+
+这里thread\_pool::\_worker\_thread就是协程池所在的posix thread，运行主体为thread\_pool::work()。
+
+### 7.7.2 实现
+
+syscall poller在reactor::run()中初始化，
+
+	poller syscall_poller(std::make_unique<syscall_pollfn>(*this));
+
+轮询落到syscall\_work\_queue::complete()接口。
+
+thread\_pool维护一个系统调用队列
+
+	syscall_work_queue inter_thread_wq;
+
+接口
+
+	unsigned syscall_work_queue::complete() {
+	    std::array<work_item*, queue_length> tmp_buf;
+	    auto end = tmp_buf.data();
+	    auto nr = _completed.consume_all([&] (work_item* wi) {
+	        *end++ = wi;
+	    });
+	    for (auto p = tmp_buf.data(); p != end; ++p) {
+	        auto wi = *p;
+	        wi->complete();
+	        delete wi;
+	    }
+	    _queue_has_room.signal(nr);
+	    return nr;
+	}
+
+首先消费syscall\_work\_queue::\_completed队列中的全部work\_item，实际是work\_item\_returning，然后在逐一调用work\_item\_returning::complete()。
+
+	virtual void work_item_returning::complete() override { _promise.set_value(std::move(*_result)); }
+
+特别简单，就是将相应的future置为ready。
+
+那么队列syscall\_work\_queue::\_completed的生产者是谁？
+
+这个队列是boost::lockfree::spsc\_queue类型的，即lock-free，单生产者单消费者队列。队列的生产者就是thread\_pool对应的posix thread，
+具体由thread\_pool::work()负责生产。
+
+
+### 7.7.3 运用
+
+接口thread\_pool::submit()用来提交异步IO操作。举例，异步IO的接口reactor::flush\_pending\_aio()：
+
+	bool
+	reactor::flush_pending_aio() {
+	    my_io_queue->poll_io_queue();
+	
+	    bool did_work = false;
+	 
+	   .....
+	
+	    if (!_pending_aio_retry.empty()) {
+	        auto retries = std::exchange(_pending_aio_retry, {});
+	        _thread_pool.submit<syscall_result<int>>([this, retries] () mutable {
+	            auto r = io_submit(_io_context, retries.size(), retries.data());
+	            return wrap_syscall<int>(r);
+	        }).then([this, retries] (syscall_result<int> result) {
+	            auto iocbs = retries.data();
+	            size_t nr_consumed = 0;
+	            if (result.result == -1) {
+	                nr_consumed = handle_aio_error(iocbs[0], result.error);
+	            } else {
+	                nr_consumed = result.result;
+	            }
+	            std::copy(retries.begin() + nr_consumed, retries.end(), std::back_inserter(_pending_aio_retry));
+	        });
+	        did_work = true;
+	    }
+	    return did_work;
+	}
+
+## 7.8 drain free page poller
+
+drain free page poller在reactor::run()中初始化，
+
+	poller drain_cross_cpu_freelist(std::make_unique<drain_cross_cpu_freelist_pollfn>());
+
+轮询调用memory::drain\_cross\_cpu\_freelist()接口，最终落到cpu_pages::drain\_cross\_cpu\_freelist()接口。
+
+
+	static thread_local cpu_pages cpu_mem;
+	
+	bool memory::drain_cross_cpu_freelist() {
+	    return cpu_mem.drain_cross_cpu_freelist();
+	}
+	
+	bool cpu_pages::drain_cross_cpu_freelist() {
+	    if (!xcpu_freelist.load(std::memory_order_relaxed)) {
+	        return false;
+	    }
+	    auto p = xcpu_freelist.exchange(nullptr, std::memory_order_acquire);
+	    while (p) {
+	        auto n = p->next;
+	        ++g_frees;
+	        free(p);  // 调用cpu_page::free()
+	        p = n;
+	    }
+	    return true;
+	}
+	
+这里，全局静态cpu\_mem变量为当前posix thread所有。而回收空闲页则是面向核的。具体而言，在seastar中，每个核对应一个shard内存，并绑一个主要的posix thread，
+它负责shard内存的初始分配和垃圾回收（drain），其它绑在同样核上的posix thread只能从shard内存分配（malloc）和释放（free）。
+
+drain有几分类似GC，但显然二者完全不同。关于shard内存，另附章节解读。
+
+## 7.9 lowres timer poller
+
+lowres timer poller是指低精度定时器的poller，面向timer<lowres\_clock>，在reactor::run()中初始化，
+
+	poller expire_lowres_timers(std::make_unique<lowres_timer_pollfn>(*this));
+
+轮询落到reactor::do\_expire\_lowres\_timers()接口:
+	
+	bool
+	reactor::do_expire_lowres_timers() {
+	    if (_lowres_next_timeout == lowres_clock::time_point()) {
+	        return false;
+	    }
+	    auto now = lowres_clock::now();
+	    if (now > _lowres_next_timeout) {
+	        complete_timers(_lowres_timers, _expired_lowres_timers, [this] {
+	            if (!_lowres_timers.empty()) {
+	                _lowres_next_timeout = _lowres_timers.get_next_timeout();
+	            } else {
+	                _lowres_next_timeout = lowres_clock::time_point();
+	            }
+	        });
+	        return true;
+	    }
+	    return false;
+	}
+	
+	template <typename T, typename E, typename EnableFunc>
+	void reactor::complete_timers(T& timers, E& expired_timers, EnableFunc&& enable_fn) {
+	    expired_timers = timers.expire(timers.now());
+	    for (auto& t : expired_timers) {
+	        t._expired = true;
+	    }
+	    while (!expired_timers.empty()) {
+	        auto t = &*expired_timers.begin();
+	        expired_timers.pop_front();
+	        t->_queued = false;
+	        if (t->_armed) {
+	            t->_armed = false;
+	            if (t->_period) {
+	                t->readd_periodic();
+	            }
+	            try {
+	                t->_callback();
+	            } catch (...) {
+	                seastar_logger.error("Timer callback failed: {}", std::current_exception());
+	            }
+	        }
+	    }
+	    enable_fn();
+	}
+	
+根据设定的超时时间reactor::\_lowres\_next\_timeout，超时后执行reactor::complete\_timers()，执行reactor::\_lowres\_timers队列中所有超时的定时器的回调，然后更新下次超时时间。
+
+那么，低精度定时器是如何进入reactor::\_lowres\_timers队列的呢？
+
+答案在reactor::add\_timer()接口。进一步，seastar封装了timer::arm()接口，用来简化应用层使用。
 
 # 8 空闲休眠机制
 
@@ -1444,3 +2003,205 @@ seastar没有用epoll方式来管理定时器触发，而是用读阻塞文件�
 
 由此可见，任务配额定时器及其posix thread是一种debug手段，实际应用环境中，可以考虑拿掉它，至少能减少一个posix thread，降低两个posix thread竞争同一个核的风险。
           
+# 10 内存管理
+
+如果不使用C++的缺省内存分配器，那么seastar将使用自定义的内存分配器。特别地，下面仅限于考虑seastar在NUMA中的内存管理机制。
+
+## 10.1 NUMA拓扑
+
+借用两张网图简单描述NUMA拓扑结构：
+
+[NUMA 架构]()
+
+[NUMA 服务器]()
+
+NUMA中的一个节点（node）由若干CPU和一个内存（memory）组成，节点之间的内存访问通过NUMA内置的互联模块进行。节点访问本地的内存更快。
+
+## 10.2 虚拟内存初始化
+
+seastar自定义内存分配器的入口在memory::allocate()。seastar在进程启动时、进入main()函数前，调用该接口。
+
+通过该入口，seastar完成虚拟内存的初始化。路径：
+
+	memory::allocate() => memory::allocate_large() => cpu_pages::allocate_large() => cpu_pages::allocate_large_and_trim() 
+	=> cpu_pages::find_and_unlink_span_reclaiming() => cpu_pages::find_and_unlink_span() => cpu_pages::initialize()
+
+特别指出，在memory::allocate\_large()调用时，通过posix thread堆栈上的、全局的变量cpu\_mem进入后续接口。
+
+	static thread_local cpu_pages cpu_mem;
+	
+	void* allocate_large(size_t size) {
+	    abort_on_underflow(size);
+	    unsigned size_in_pages = (size + page_size - 1) >> page_bits;
+	    if ((size_t(size_in_pages) << page_bits) < size) {
+	        return nullptr; // (size + page_size - 1) caused an overflow
+	    }
+	    return cpu_mem.allocate_large(size_in_pages);
+	
+	}
+
+也就是说，seastar进程中的每个posix thread拥有一个这样的变量。在seastar启动的时候，调用memory::allocate()，遇到一个这样的变量，
+它属于seastar的主进程。seastar以后创建的posix thread会拷贝该变量的一个副本，到posix thread自己的堆栈上，作为posix thread的全局变量存在。
+
+来看cpu\_pages::initialize()实现。
+
+	bool cpu_pages::initialize() {
+	    if (is_initialized()) { // 判断已建立的虚拟页面数是否为零，防止多次初始化。只有每个核上绑定的first posix thread才有机会进入。
+	        return false;
+	    }
+	    cpu_id = cpu_id_gen.fetch_add(1, std::memory_order_relaxed); // 每进来初始化一次（即对不同的posix thread）, cpu_id自动加一 => 在seastar中，只有绑到每个核上的主线程才有机会进入（初始化），所以cpu_id对应的就是物理核。
+	    assert(cpu_id < max_cpus);
+	    all_cpus[cpu_id] = this; // 绑定 cpu_id和c
+	    auto base = mem_base() + (size_t(cpu_id) << cpu_id_shift); // 获取当前cpu_id对应的虚拟内存地址
+	    auto size = 32 << 20;  // Small size for bootstrap （32MB）
+	    auto r = ::mmap(base, size,             // 修改当前虚拟内存的首32MB为可写可读
+	            PROT_READ | PROT_WRITE,
+	            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+	            -1, 0);
+	    if (r == MAP_FAILED) {
+	        abort();
+	    }
+	    ::madvise(base, size, MADV_HUGEPAGE);        // 告诉内核，这32MB是大页，分配物理内存时按大页分配
+	    pages = reinterpret_cast<page*>(base);         // 好了，知道了，这32MB是页表
+	    memory = base;                                               // 保存虚拟内存的起始地址到cpu_mem.memory
+	    nr_pages = size / page_size;                            //  这32MB按4KB页大小，可以分为8192个页面
+	    // we reserve the end page so we don't have to special case
+	    // the last span.
+	    auto reserved = align_up(sizeof(page) * (nr_pages + 1), page_size) / page_size; // 这8192个页面的前65个预留出来。
+	    for (pageidx i = 0; i < reserved; ++i) {
+	        pages[i].free = false;
+	    }
+	    pages[nr_pages].free = false;
+	    free_span_no_merge(reserved, nr_pages - reserved);
+	    live_cpus[cpu_id].store(true, std::memory_order_relaxed);
+	    return true;
+	}
+
+深入看看memory::mem\_base()的实现：
+
+	static char* mem_base() {
+	    static char* known;
+	    static std::once_flag flag;
+	    std::call_once(flag, [] {            // 此处lambda仅执行一次。第二次来时，直接跳过，返回known
+	        size_t alloc = size_t(1) << 44;       // alloc = 16 TB
+	        auto r = ::mmap(NULL, 2 * alloc,  // 按内核为用户空间建立一个32TB的虚拟内存   
+	                    PROT_NONE,                    // 虚拟内存禁止读写
+	                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+	                    -1, 0);
+	        if (r == MAP_FAILED) {
+	            abort();
+	        }
+	        ::madvise(r, 2 * alloc, MADV_DONTDUMP);   // 告诉内核，这32TB虚拟内存空间在coredump发生时，无须dump
+	        auto cr = reinterpret_cast<char*>(r);            // 虚拟内存起始地址 
+	        known = align_up(cr, alloc);                           // 虚拟内存起始地址按16TB对齐一下
+	        ::munmap(cr, known - cr);                              // 对齐地址之前的部分，还给内核
+	        ::munmap(known + alloc, cr + 2 * alloc - (known + alloc)); // 对齐地址随后的16TB保留，尾部超出部分还给内核
+	    });
+	    return known; // 返回对齐后的虚拟内存起始地址
+	}
+	
+（注：这个接口用到了抽屉原理，连续的两个16TB空间，必然包含一个对齐的16TB块，块是指把整个虚拟内存按16TB划分成若干块。接口就是找出这个对齐的16TB。）
+
+好了，再回头看看cpu\_pages::initialize()中的base变量是什么。
+
+	auto base = mem_base() + (size_t(cpu_id) << cpu_id_shift);
+
+这里用到了cpu\_id\_shift全局常量值，看两个定义：
+
+	static constexpr unsigned cpu_id_shift = 36; // FIXME: make dynamic
+	static constexpr unsigned max_cpus = 256;
+
+也就是说，base表示16TB虚拟内存中的一个64G虚拟内存块。seastar最多支持256个核，每个核对应（绑定）一个64GB虚拟内存块，再在其上按4KB大小划分页面。
+
+注意，cpu\_mem.nr\_pages置为8192表明，seastar自定义内存分配器最大支持32MB空间的分配。
+
+好了，seastar主进程（main posix thread）的虚拟内存和页表建立起来了。下面看看虚拟内存和NUMA的节点的物理内存是如何绑定的。
+
+## 10.3 物理内存与虚拟内存绑定
+
+seastar进入main()后，主进程首先获取NUMA的拓扑结构，然后通过memory::configure()接口，完成物理内存和虚拟内存的绑定。
+
+获取NUMA拓扑结构:
+
+    auto resources = resource::allocate(rc);
+    std::vector<resource::cpu> allocations = std::move(resources.cpus);
+    
+结果交给aresources，包含cpu组和IO队列拓扑信息。 allocations保存cpu组信息。
+cpu组包含cpu id和memory组信息。
+
+注：NUMA拓扑结构是通过hwloc\_xxx系列接口获取的。
+
+	struct memory {
+	    size_t bytes;
+	    unsigned nodeid;
+	
+	};
+	
+	struct io_queue {
+	    unsigned id;
+	    unsigned capacity;
+	};
+	
+	// Since this is static information, we will keep a copy at each CPU.
+	// This will allow us to easily find who is the IO coordinator for a given
+	// node without a trip to a remote CPU.
+	struct io_queue_topology {
+	    std::vector<unsigned> shard_to_coordinator;
+	    std::vector<io_queue> coordinators;
+	};
+	
+	struct cpu {
+	    unsigned cpu_id;
+	    std::vector<memory> mem;
+	};
+	
+	struct resources {
+	    std::vector<cpu> cpus;
+	    io_queue_topology io_queues;
+	};
+	
+> 问：IO队列的拓扑信息是指什么？
+> 
+>答：（不清楚概念）
+
+有了物理核与物理内存的拓扑信息，如果seastar配置了posix thread的亲和性，那么seastar创建posix thread，就可以通过memory::configure()接口绑定物理内存与虚拟内存了。
+
+memory::configure()接口核心代码如下：
+
+	    size_t pos = 0;
+	    for (auto&& x : m) {
+	#ifdef HAVE_NUMA
+	        unsigned long nodemask = 1UL << x.nodeid;      // 本物理内存节点号
+	        if (mbind) {
+	            auto r = ::mbind(cpu_mem.mem() + pos, x.bytes,  // 将虚拟内存指定偏移位置起的一块区域，绑定到指定的物理内存。这里，x.bytes为当前物理内存大小
+	                            MPOL_PREFERRED,         // 告诉内核，分配内存时优先从指定的节点分配
+	                            &nodemask, std::numeric_limits<unsigned long>::digits, // 虚拟内存绑定到物理内存节点号的位图，这里只有一个物理内存节点号
+	                            MPOL_MF_MOVE);        // 要求内核将已分配的页面尽可能挪至本节点。共享内存不挪动
+	
+	            if (r == -1) {
+	                char err[1000] = {};
+	                strerror_r(errno, err, sizeof(err));
+	                std::cerr << "WARNING: unable to mbind shard memory; performance may suffer: "
+	                        << err << std::endl;
+	            }
+	        }
+	#endif
+	        pos += x.bytes; // 虚拟内存偏移量
+	    }
+	    
+可见， NUMA物理内存和虚拟内存的绑定，最终是通过mbind接口实现的。
+
+	#include <numaif.h>
+	
+	long mbind(void *addr, unsigned long len, int mode,
+	          const unsigned long *nodemask, unsigned long maxnode,
+	          unsigned flags);
+	
+	Link with -lnuma.
+
+
+## 10.4 运用
+
+由于seastar接管了C++的缺省内存分配器，所以seastar中的内存分配与回收是自动发生的，无须额外处理。
+
+章节7.8 drain free page poller在seastar中并无实际用处，因为cpu\_mem.xcpu\_freelist变量没有地方变更，始终为空指针，也即，跨cpu的内存分配不考虑。          
