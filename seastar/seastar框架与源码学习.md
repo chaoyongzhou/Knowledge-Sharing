@@ -734,8 +734,6 @@ when\_all\_succeed返回的是一个future.
 
 所谓shared-nothing，是指posix thread之间不共同拥有同一块内存（防止锁竞争），posix thread之间交换数据通过消息方式（smp::submit_to）。
 
-所谓的每个posix thread拥有一块独立的内存空间，是指彼此拥有的内存空间（比如变量）的交集为空，每个posix thread拥有的内存空间未必连续。特此澄清，以防误解。
-
 ## 4.6 network stack
 
 seastar的shard网络堆栈是指，每个posix thread处理一部分连接，该连接的整个生命周期都发生在接入的posix thread中。
@@ -2051,7 +2049,7 @@ seastar自定义内存分配器的入口在memory::allocate()。seastar在进程
 	    }
 	    cpu_id = cpu_id_gen.fetch_add(1, std::memory_order_relaxed); // 每进来初始化一次（即对不同的posix thread）, cpu_id自动加一 => 在seastar中，只有绑到每个核上的主线程才有机会进入（初始化），所以cpu_id对应的就是物理核。
 	    assert(cpu_id < max_cpus);
-	    all_cpus[cpu_id] = this; // 绑定 cpu_id和c
+	    all_cpus[cpu_id] = this; // 绑定 cpu_id和cpu_mem对象
 	    auto base = mem_base() + (size_t(cpu_id) << cpu_id_shift); // 获取当前cpu_id对应的虚拟内存地址
 	    auto size = 32 << 20;  // Small size for bootstrap （32MB）
 	    auto r = ::mmap(base, size,             // 修改当前虚拟内存的首32MB为可写可读
@@ -2084,7 +2082,7 @@ seastar自定义内存分配器的入口在memory::allocate()。seastar在进程
 	    static std::once_flag flag;
 	    std::call_once(flag, [] {            // 此处lambda仅执行一次。第二次来时，直接跳过，返回known
 	        size_t alloc = size_t(1) << 44;       // alloc = 16 TB
-	        auto r = ::mmap(NULL, 2 * alloc,  // 按内核为用户空间建立一个32TB的虚拟内存   
+	        auto r = ::mmap(NULL, 2 * alloc,  // 让内核为用户空间建立一个32TB的虚拟内存   
 	                    PROT_NONE,                    // 虚拟内存禁止读写
 	                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
 	                    -1, 0);
