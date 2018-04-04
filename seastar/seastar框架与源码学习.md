@@ -2189,6 +2189,8 @@ memory::configure()接口核心代码如下：
 	    
 可见， NUMA物理内存和虚拟内存的绑定，最终是通过mbind接口实现的。
 
+这里cpu_mem.mem()表示当前进程或posix thread的虚拟存储其实地址。
+
 	#include <numaif.h>
 	
 	long mbind(void *addr, unsigned long len, int mode,
