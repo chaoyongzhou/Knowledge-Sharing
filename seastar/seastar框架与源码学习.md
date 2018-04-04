@@ -2190,7 +2190,7 @@ memory::configure()接口核心代码如下：
 	    
 可见， NUMA物理内存和虚拟内存的绑定，最终是通过mbind接口实现的。
 
-这里cpu_mem.mem()表示当前进程或posix thread的虚拟存储其实地址。
+这里cpu_mem.mem()表示当前进程或posix thread的虚拟内存的起始地址。
 
 	#include <numaif.h>
 	
@@ -2203,6 +2203,6 @@ memory::configure()接口核心代码如下：
 
 ## 10.4 运用
 
-由于seastar接管了C++的缺省内存分配器，所以seastar中的内存分配与回收是自动发生的，无须额外处理。
+由于seastar接管了C++的缺省内存分配器，又重载了new和delete操作符，所以seastar中的内存分配与回收是自动发生的，无须额外处理。
 
 章节7.8 drain free page poller在seastar中并无实际用处，因为cpu\_mem.xcpu\_freelist变量没有地方变更，始终为空指针，也即，跨cpu的内存分配不考虑。          
