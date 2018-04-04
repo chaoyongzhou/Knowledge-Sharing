@@ -660,7 +660,7 @@ C++确保std::unique_ptr始终只有指针一个拷贝，比如
 	
 	seastar::future<uint64_t> slow_size(file f) {
 		return seastar::sleep(10ms).then([f] {
-			return f.size().finally([f] {}); // finally延长了f的生命周期，所以在f.size()执行（resolve）时，f依然在生命周期内，未被销毁。finally其实啥也没做。
+			return f.size().finally([f] {}); // finally延长了f的生命周期，所以在f.size()执行完成（resolve）后，f依然在生命周期内，未被销毁。finally其实啥也没做。
 		});
 	}
 
