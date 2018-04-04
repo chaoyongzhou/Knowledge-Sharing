@@ -1881,7 +1881,8 @@ seastar的idle-sleep机制在主循环中，每个loop都需要检查的：
 专门负责此reactor单例关联的一个任务配额定时器。
 
 任务配额定时器：reactor::\_task\_quota\_timer
-任务配合定时器posix thread: reactor::\_task\_quota\_timer\_thread
+
+任务配额定时器posix thread: reactor::\_task\_quota\_timer\_thread
 
 ## 9.1 任务配额定时器posix thread创建
 
