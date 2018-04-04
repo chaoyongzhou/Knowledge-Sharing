@@ -2096,7 +2096,7 @@ seastar自定义内存分配器的入口在memory::allocate()。seastar在进程
 	        ::munmap(cr, known - cr);                              // 对齐地址之前的部分，还给内核
 	        ::munmap(known + alloc, cr + 2 * alloc - (known + alloc)); // 对齐地址随后的16TB保留，尾部超出部分还给内核
 	    });
-	    return known; // 返回对齐后的虚拟内存起始地址
+	    return known; // 返回对齐后的16TB的虚拟内存起始地址
 	}
 	
 （注：这个接口用到了抽屉原理，连续的两个16TB空间，必然包含一个对齐的16TB块，块是指把整个虚拟内存按16TB划分成若干块。接口就是找出这个对齐的16TB。）
