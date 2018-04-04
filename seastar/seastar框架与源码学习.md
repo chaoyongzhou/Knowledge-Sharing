@@ -1598,7 +1598,7 @@ seastar提供了execution stage的使用接口：seastar::make\_execution\_stage
 
 syscall poller与seastar的协程池（thread\_pool）相关，该协程池用来处理与POSIX文件系统、块设备文件系统等相关的异步IO系统调用。
 
-特别地，改协程池运行于一个独立的posix thread上。参见thread\_pool的构造函数：
+特别地，该协程池运行于一个独立的posix thread上。参见thread\_pool的构造函数：
 
 	thread_pool::thread_pool(sstring name) : _worker_thread([this, name] { work(name); }), _notify(pthread_self()) {
 	    engine()._signals.handle_signal(SIGUSR1, [this] { inter_thread_wq.complete(); });
