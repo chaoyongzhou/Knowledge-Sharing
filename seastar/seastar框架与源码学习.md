@@ -2112,7 +2112,9 @@ seastar自定义内存分配器的入口在memory::allocate()。seastar在进程
 
 也就是说，base表示16TB虚拟内存中的一个64G虚拟内存块。seastar最多支持256个核，每个核对应（绑定）一个64GB虚拟内存块，再在其上按4KB大小划分页面。
 
-注意，cpu\_mem.nr\_pages置为8192表明，seastar自定义内存分配器最大支持32MB空间的分配。
+> 问：cpu_mem.nr_pages置为8192，是否表明seastar自定义内存分配器最大支持32MB空间的分配？
+> 
+> 答：此刻是，但在memory::configure()执行后就不是了。seastar会根据物理内存总量，重新调整cpu_mem.nr_pages。
 
 好了，seastar主进程（main posix thread）的虚拟内存和页表建立起来了。下面看看虚拟内存和NUMA的节点的物理内存是如何绑定的。
 
@@ -2167,6 +2169,24 @@ cpu组包含cpu id和memory组信息。
 
 memory::configure()接口核心代码如下：
 
+	void memory::configure(std::vector<resource::memory> m, bool mbind,
+		    optional<std::string> hugetlbfs_path) {
+		size_t total = 0;
+		for (auto&& x : m) {
+		    total += x.bytes; // 计算物理内存总量
+		}
+		allocate_system_memory_fn sys_alloc = allocate_anonymous_memory;
+		if (hugetlbfs_path) {
+		    // std::function is copyable, but file_desc is not, so we must use
+		    // a shared_ptr to allow sys_alloc to be copied around
+		    auto fdp = make_lw_shared<file_desc>(file_desc::temporary(*hugetlbfs_path));
+		    sys_alloc = [fdp] (optional<void*> where, size_t how_much) {
+		        return allocate_hugetlbfs_memory(*fdp, where, how_much);
+		    };
+		    cpu_mem.replace_memory_backing(sys_alloc);
+		}
+		cpu_mem.resize(total, sys_alloc); // 根据物理内存总量，重新调整cpu_mem.nr_pages
+
 	    size_t pos = 0;
 	    for (auto&& x : m) {
 	#ifdef HAVE_NUMA
@@ -2187,6 +2207,7 @@ memory::configure()接口核心代码如下：
 	#endif
 	        pos += x.bytes; // 虚拟内存偏移量
 	    }
+    }
 	    
 可见， NUMA物理内存和虚拟内存的绑定，最终是通过mbind接口实现的。
 
