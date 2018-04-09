@@ -153,7 +153,7 @@ service\_connection\_handle是一个无限循环：阻塞读数据，然后发�
 	        
 	        demo_logger.debug("service_connection_handle: recv: '{}' [{}]", data, len);
 	
-	        if(1 == len && 0 == ::memcmp("a", data, len)) {  // 客户端输入a，则有核1打印输出
+	        if(1 == len && 0 == ::memcmp("a", data, len)) {  // 客户端输入a，则由核1打印输出
 	            demo_logger.debug("service_request_dispose: submit 'a' to core 1");
 	            return seastar::smp::submit_to(1, []{
 	                demo_logger.debug("service_request_dispose: recv 'a'");
@@ -161,7 +161,7 @@ service\_connection\_handle是一个无限循环：阻塞读数据，然后发�
 	            });
 	        }
 	
-	        if(1 == len && 0 == ::memcmp("b", data, len)) {  // 客户端输入，则有核2打印输出
+	        if(1 == len && 0 == ::memcmp("b", data, len)) {  // 客户端输入b，则由核2打印输出
 	            demo_logger.debug("service_request_dispose: submit 'b' to core 2");
 	            return seastar::smp::submit_to(2, []{
 	                demo_logger.debug("service_request_dispose: recv 'b'");
@@ -169,7 +169,7 @@ service\_connection\_handle是一个无限循环：阻塞读数据，然后发�
 	            });
 	        }    
 	
-	        if(1 == len && 0 == ::memcmp("c", data, len)) {  // 客户端输入c，则有核3打印输出
+	        if(1 == len && 0 == ::memcmp("c", data, len)) {  // 客户端输入c，则由核3打印输出
 	            demo_logger.debug("service_request_dispose: submit 'c' to core 3");
 	            return seastar::smp::submit_to(3, []{
 	                demo_logger.debug("service_request_dispose: recv 'c'");
