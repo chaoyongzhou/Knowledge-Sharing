@@ -222,7 +222,7 @@ aeron选择多线程模型。aeron内部主要有三个的角色：conductor、s
 
 # 5 Design Overview
 
-先从剖析aeron的架构图开始。 ![Architecture](https://github.com/real-logic/aeron/wiki/Design-Overview)
+先从剖析aeron的架构图开始。 ![Architecture](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/aeron/architecture.png)
 
 
 这张图画得挺炫，但有蛊惑之处，需要探究一番。
