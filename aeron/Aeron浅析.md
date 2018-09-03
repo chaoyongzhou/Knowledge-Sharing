@@ -316,7 +316,7 @@ client中的publisher和subscriber存在类似的问题，分别是与共享内�
 
 好，再来看如果只有一个Media Driver，publisher和subscriber都与它交互，那么sender是如何把数据交给receiver的？
 
-答案是对于UPD Media而言走UDP通道：sender把数据放到UDP通道，receiver从UDP通道上接收数据，不论单播还是组播，因为sender和receiver在Media Driver内没有交互。
+答案是对于UDP Media而言走UDP通道：sender把数据放到UDP通道，receiver从UDP通道上接收数据，不论单播还是组播，因为sender和receiver在Media Driver内没有交互。
 
 
 # 6 Ring Buffer
