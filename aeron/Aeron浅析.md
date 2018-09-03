@@ -174,7 +174,7 @@ aeron为了减少一点配置量（太多了），约定：用来传数据的组
 例如，如果配置224.10.9.7为data endpoint，那么aeron自动将224.10.9.8作为control endpoint。
 
 
-# 3 基础知识：共享内存通讯，目录结构
+# 3 基础知识：共享内存通讯
 
 ## 3.1 命名共享内存
 
@@ -208,7 +208,7 @@ aeron在共享内存上，建立单生产者多消费者（spmc）模型、多�
 
 ## 4.2 aeron中的多线程
 
-aeron选择多线程模型。aeron内部主要有三个的角色：conductor、sender、receiver。aeron抽象出runner的概念，每个角色交个一个runner执行，每个runner的执行承载体为线程。
+aeron选择多线程模型。aeron内部主要有三个的角色：conductor、sender、receiver。aeron抽象出runner的概念，每个角色交给一个runner执行，每个runner的执行承载体为线程。
 
 由此，aeron提供了若干种模式：
 
@@ -218,7 +218,7 @@ aeron选择多线程模型。aeron内部主要有三个的角色：conductor、s
 
 * dedicated模式：三个runner分别在三个不同的线程上执行
 
-交互发生在conductor和sender之间、conductor和receiver之间，通过共享内存交换数据。
+交互发生在conductor和sender之间、conductor和receiver之间，通过单生产者单消费者（spsc）队列交换数据。
 
 # 5 Design Overview
 
@@ -298,7 +298,7 @@ client中的publisher和subscriber存在类似的问题，分别是与共享内�
         
 （2）客户端（client）同时存在publisher、subscriber不准确。
 
-客户端同时画上publisher和subscriber能理解，协议嘛，收发两端都要有。在图的左右两侧都画上客户端，每个客户端都画上publisher和subscriber，这就不理解了。这是要告诉读者，客户端必须通知支持publisher和subscriber？实际应用场景显然不是，通常是一端需要publisher，另一端需要subscriber就够了。把图右侧的Media Driver和Client去掉，理解上一点毛病都没有，协议完整。
+客户端同时画上publisher和subscriber能理解，协议嘛，收发两端都要有。在图的左右两侧都画上客户端，每个客户端都画上publisher和subscriber，这就不理解了。这是要告诉读者，客户端必须同时支持publisher和subscriber？实际应用场景显然不是，通常是一端需要publisher，另一端需要subscriber就够了。把图右侧的Media Driver和Client去掉，理解上一点毛病都没有，协议完整。
 
 无论如何，读者理解了原理，这张图怎么看都行，它只是对初学者会造成一些不必要的理解上的麻烦。
 
@@ -315,7 +315,8 @@ client中的publisher和subscriber存在类似的问题，分别是与共享内�
 （2）Media Driver不可能是一个自治的系统，因为传输数据来源于client，去向也是client。
 
 好，再来看如果只有一个Media Driver，publisher和subscriber都与它交互，那么sender是如何把数据交给receiver的？
-答案是UDP通道：sender把数据放到UDP通道，receiver从UDP通道上接收数据，不论单播还是组播，因为sender和receiver在Media Driver内没有交互。
+
+答案是对于UPD Media而言走UDP通道：sender把数据放到UDP通道，receiver从UDP通道上接收数据，不论单播还是组播，因为sender和receiver在Media Driver内没有交互。
 
 
 # 6 Ring Buffer
@@ -326,7 +327,7 @@ Media Driver的conductor和client之间通讯通过共享内存CNC的Ring Buffer
 
 ![](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/aeron/CNC.png)
 
-可见通讯是双向的：CNC有两个Ring Buffer，一个是client到ductor方向，多生产者单消费者（mpsc）模型；一个是conductor到client方向，广播方式，单生产者多消费者（spmc）模型。
+可见通讯是双向的：CNC有两个Ring Buffer，一个是client到conductor方向，多生产者单消费者（mpsc）模型；一个是conductor到client方向，广播方式，单生产者多消费者（spmc）模型。
 
 特别指出，aeron的作者在实现Ring Buffer时很务实，充满实战既视感，毫不学究。
 
@@ -335,7 +336,7 @@ Media Driver的conductor和client之间通讯通过共享内存CNC的Ring Buffer
 
 ![](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/aeron/Circular%20Buffer.jpg)
 
-对标准的Ring Buffer而言，遇到头尾，数据逻辑上顺序连接，实际上一段数据在这段内存的尾部，一段数据在这段内存的头部，不连续，读写数据存在两次操作。
+对标准的Ring Buffer而言，遇到头尾，数据逻辑上顺序连接，实际上一段数据在这段内存的尾部，一段数据在这段内存的头部，不连续，读写数据需要两次操作。
 aeron的实现是，遇到尾部空间不足，则直接跳过，从头部开始，读写一次操作完成。
 
 这儿有一版很好的Ring Buffer开源实现，供读者参考：[Ring Buffer](https://github.com/VladimirTyrin/RingBuffer.git)
@@ -357,7 +358,7 @@ Log Buffer Meta Data用来指示每个Partition存的是哪个term的哪部分�
 对于publication，Log Buffer是多生产者、单消费者模型（mpsc）；对于image而言，Log Buffer是单生产者、多生产者模型（spmc）。
 
 aeron处理的是数据流，因此Log Buffer数据的读写是顺序的。数据流被切成固定大小的Term，放进Log Buffer的3个partion中。
-每个Term有一个标识（id），标识从初始值开始，顺序增长，aeron根据该标识，对3个partition采用Round Robbin算法，
+每个Term有一个标识（term id），标识从初始值开始，顺序增长，aeron根据该标识，对3个partition采用Round Robbin算法，
 比如Term A放进partion[0]，那么Term A+1放进partion[1]， Term A+2放进partion[2]，Term A+3放进partion[0]，依次类推。
 这样做的好处是可以降低读写竞争概率，比如receiver将Term A放进partion[0]后，reader才可以从这里读，而此时receiver可以将Term A+1放进partion[1]，对不同partition的内存屏障大概率不会产生竞争。
 
@@ -498,7 +499,7 @@ aeron有不少标识，这里特别提到Correlation Id，是因为该标识与C
 
 通常，Client生成Correlation Id，在指令中携带，传递给Media Driver，后者在反馈中携带，回送给Client。换言之，这原本是Client用来区分和匹配（指令，反馈）对的。
 
-但是， aeron目前的实现中，将Correlation Id挪作它用了。比如，在create publication时，Media Driver将Correction Id直接作为publication的Registration Id，并将该Registration Id回送给Client留着纪念，用来标识所创建的publication。
+但是， aeron目前的实现中，将Correlation Id挪作它用了。比如，在create publication时，Media Driver将Correction Id直接作为publication的Registration Id，并将该Registration Id回送给Client留作纪念，用来标识所创建的publication。
 
 这下麻烦了！Media Driver可能会面对多个Client，如果两个Client用同一个Correlation Id创建publication，这不冲突了吗？
 
@@ -516,7 +517,7 @@ aeron设计上的一个缺陷，导致在这儿挖了个坑，各位小心点，
 
 # 15 Congestion Control & Flow Control
 
-aeron的C版这块实现基本为零，非常简陋：不能调整窗口大小。JAVA版我还没研究。
+aeron的C版这块实现基本为零，非常简陋：不能调整窗口大小。JAVA版这块我还没研究。
 
 我认为，可靠UDP传输最有价值的，大概就是在这里了，目测aeron owner不会很快放出来。各位想在aeron上玩点大的，就在这儿下功夫吧！
 
@@ -535,7 +536,7 @@ aeron最早出的是JAVA版，也是目前为止功能最全的版本。C版是�
 于是有好事之徒，在Media Driver之上又包装一层，加上自己的指令集、流程控制，形成新的Media Driver。下面的Archive就是一例。
 
 
-# 17 Archive，重要的辅助功能
+# 17 Archive
 
 Archive的应用场景是录播（Recording）、重放（Replay），也就是，Media Driver将收到的数据，不仅放入image，还要额外落盘到文件，重放时从落盘文件中取出数据，放到指定的Channel上。
 
