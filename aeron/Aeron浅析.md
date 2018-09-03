@@ -170,6 +170,7 @@ aeron没有用UDP广播，和它没啥关系。aeron中的广播是面向客户�
 ## 2.8 Aeron中的组播地址约定
 
 aeron为了减少一点配置量（太多了），约定：用来传数据的组播地址（data endpoint）必须是奇数，用来传控制的组播地址（control endpoint）为该地址加1。
+
 例如，如果配置224.10.9.7为data endpoint，那么aeron自动将224.10.9.8作为control endpoint。
 
 
@@ -197,8 +198,12 @@ aeron在共享内存上，建立单生产者多消费者（spmc）模型、多�
 
 ## 4.1 多线程通讯
 
-在一个进程中开多个线程，共同拥有一个进程空间。多线程通讯的优点是可以不通过message交换数据，直接内存访问即可，缺点是需要通过锁、原子操作解决临界资源竞争问题。
+在一个进程中开多个线程，共同拥有一个进程空间。
+
+多线程通讯的优点是可以不通过message交换数据，直接内存访问即可，缺点是需要通过锁、原子操作解决临界资源竞争问题。
+
 虽然message与锁等价，但message交换需要编解码（encoding & decoding），对于特定的业务场景，如果锁的开销和复杂度远远小于message交换，那么多线程模型就是适用的。
+
 具体问题具体分析，不一而足。
 
 ## 4.2 aeron中的多线程
@@ -207,11 +212,11 @@ aeron选择多线程模型。aeron内部主要有三个的角色：conductor、s
 
 由此，aeron提供了若干种模式：
 
-shared模式：三个runner在同一个线程上执行
+* shared模式：三个runner在同一个线程上执行
 
-shared network模式：condctor runner一个线程，sender runner + receiver runner一个线程
+* shared network模式：condctor runner一个线程，sender runner + receiver runner一个线程
 
-dedicated模式：三个runner分别在三个不同的线程上执行
+* dedicated模式：三个runner分别在三个不同的线程上执行
 
 交互发生在conductor和sender之间、conductor和receiver之间，通过共享内存交换数据。
 
