@@ -542,7 +542,7 @@ Archive的应用场景是录播（Recording）、重放（Replay），也就是�
 
 Aeron社区目前提供了Archive Media Driver和Archive Client。
 
-Archive既可以单机单Media Driver部署，也可以单机双Media Driver部署，也可以双机双Media Driver部署。本质上，你只要能满足archive定义的指令集合处理流程即可。
+Archive既可以单机单Media Driver部署，也可以单机双Media Driver部署，也可以双机双Media Driver部署。本质上，你只要能满足archive定义的指令集和处理流程即可。
 双Media Driver部署时，一个用Archive Media Driver，一个用普通的Media Driver就够了，不必非要用两个Archive Media Driver。
 
 下图是不同部署方式的原理图，供参考，不再累述原理。
