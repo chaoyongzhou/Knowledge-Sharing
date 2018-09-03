@@ -1259,7 +1259,7 @@ broadcast record: broadcast record header | broadcast record msg
 
 broadcast record header: msg length | msg type id
 
-![图 6 CNC文件图解](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/aeron/publication%20log%20buffer%E7%BB%93%E6%9E%842.png)
+![图 6 CNC文件图解](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/aeron/CNC.png)
 
 
 （现在我们知道，与aeron driver交互就是基于driver提供的指令通道和反馈通道）
