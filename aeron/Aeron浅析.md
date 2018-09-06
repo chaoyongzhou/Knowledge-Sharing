@@ -291,7 +291,7 @@ client中的publisher和subscriber存在类似的问题，分别是与共享内�
 
 应用层publisher将数据交给client writer => client writer将数据写入共享内存publication => Media Driver的sender从publication取出数据，放到Media上，发往远端的subscriber。这是pub数据流。
 
-远端Media Driver的receiver从Media接收数据，放进共享内存image => client reader从共享内存image总读取数据，交给应用层。 这是sub数据流。
+远端Media Driver的receiver从Media接收数据，放进共享内存image => client reader从共享内存image中读取数据，交给应用层。 这是sub数据流。
 
 如果把应用层和客户端看作是一回事，即都是client，那么这张图没有毛病，只是理解上会断片。
 
