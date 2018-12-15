@@ -42,7 +42,7 @@
 
 8.2 AMD设计
 
-8.3 流控与AIO降级策略
+8.3 流控与重试
 
 # 1 背景
    
@@ -497,7 +497,7 @@ AMD中的AIO、内存缓存（Mem Cache）和SSD缓存（SSD Cache）也同样�
 ![](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/amd/8-2-2.png)
 
 
-## 8.3 流控与AIO降级策略
+## 8.3 流控与重试
 
 在三级缓存体系中，SATA盘的IO能力最弱。数据从SSD降级存储到SATA盘（对应SATA盘写操作）时， 很容易打爆SATA，因此需要进行流控处理，控制从SSD盘到SATA盘的数据流速。
 
