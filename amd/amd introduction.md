@@ -43,6 +43,7 @@
 8.2 AMD设计
 
 8.3 流控与重试
+8.4 页面流转
 
 # 1 背景
    
@@ -516,5 +517,17 @@ AMD中的AIO、内存缓存（Mem Cache）和SSD缓存（SSD Cache）也同样�
 ![](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/amd/8-3-1.png)
 
 
+## 8.4 页面流转
 
- 
+内存缓存（Mem Cache）和SSD缓存（SSD Cache）各自维护一个页面（page）的LRU链表，页面从表头插入，表尾淘汰。
+
+SATA也维护一个类似的LRU链表，但不受AMD控制。
+
+内存缓存（Mem Cache）的页面从LRU表尾淘汰前，由降级机制刷到SSD缓存（SSD Cache）。
+
+SSD缓存（SSD Cache）的页面从LRU表尾淘汰前，由降级机制刷到SATA。
+
+访问的页面在SSD缓存（SSD Cache）或者SATA命中时，升级到内存缓存（Mem Cache）。
+
+![](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/amd/8-4-1.png)
+
