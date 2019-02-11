@@ -105,9 +105,10 @@ C++和JAVA语言中，类成员函数参数表的第一个隐含参数是this指
 
 C语言自由奔放，不需要编译器准备该参数，可以纯手工添加，比如，
 
-void camd_process_pages(CAMD_MD *camd_md)
+	void camd_process_pages(CAMD_MD *camd_md)
 
-void camd_process_page(CAMD_MD *camd_md, CAMD_PAGE *camd_page)
+	void camd_process_page(CAMD_MD *camd_md, CAMD_PAGE *camd_page)
+
 第一个参数camd_md表示当前模块CAMD_MD的一个实例化对象，相当于释放出this指针，函数名则表示对该对象的操作，或者该对象所执行的操作。
 
 将对象放在首参位置是必须的、也是唯一的选择。
