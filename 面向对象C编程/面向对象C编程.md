@@ -74,6 +74,7 @@ BGN与面向对象的关系，十分类似Linux与C的关系，因需而生，�
 对该枚举类型取sizeof，通常返回的是4字节。
 
 修改一下，
+
 	typedef enum
 	{
 	    model_001   = 0,
