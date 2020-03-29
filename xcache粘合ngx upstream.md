@@ -188,7 +188,7 @@ upstream的初始化也做了三件事情：
 	    ngx_http_upstream_connect(r, u);
 	}
 	
-ngx\_http\_upstream\_connect发起socket连接后，向对端发起请求，这些正是xcache粘合upstream需要掐掉。
+ngx\_http\_upstream\_connect发起socket连接后，向对端发起请求，这些正是xcache粘合upstream需要掐掉的部分。
 
 检视代码，可以看到一个重要的信息：对端信息就藏再u->peer.sockaddr中。所以，我们需要拿到peer即可。考虑到u是新创建的空的upstream （ngx\_http\_upstream\_t），所以， peer只可能、也应该来自于前面查找到的uscf。所以调用点uscf->peer.init(r, uscf)是关键。
 
