@@ -139,7 +139,7 @@ upstream的初始化也做了三件事情：
 
 （2）调用查找到的uscf的peer初始化handler（uscf->peer.init(r, uscf)），这个handler的设定与扩展辅助模块有关，下面再表。
 
-（3）调用connec（ngx\_http\_upstream\_connect => ngx\_event\_connect\_peer）开始发起到对端peer的连接（即源站或上一层），开始后续流程。
+（3）调用connect（ngx\_http\_upstream\_connect => ngx\_event\_connect\_peer）开始发起到对端peer的连接（即源站或上一层），开始后续流程。
 
 	static void
 	ngx_http_upstream_init_request(ngx_http_request_t *r)
