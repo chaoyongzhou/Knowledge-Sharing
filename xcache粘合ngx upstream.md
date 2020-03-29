@@ -4,9 +4,9 @@
 
 按照xcache原本的设计，需要部署一个独立的detect组件做源站探测，xcache在回源前截住dns解析，向detect组件发送tcp解析请求，携带待解析的域名；detect组件根据配置的IP、域名、策略周期解析源站的存活，并根据服务过来的请求，返回一个IP地址。
 
-考虑到线上cdn的使用方式，有自己独立的探测组件，nginx利用dyups接口周期从探测组件拉取源站列表，并利用dyups动态更新nginx的upstream配置，因此，xcache希望最大化复用这一方式，废弃掉detect组件，改为支持dyups。
+考虑到对ngx upstream配置的直接支持，xcache决定采取粘合方式。
 
-支持dyups并不困难，但是dyups基于upstream模块，后者在ngx content阶段介入，向源站发起请求，而xcache需要在ngx content阶段介入，自己向源站发起请求，需要绕过upstream模块。
+困难点在于proxy在ngx content阶段介入，向源站发起请求，而xcache需要在ngx content阶段介入，自己向源站发起请求，需要掐掉upstream建连部分。
 
 因为，xcache需要解决的问题是，粘合upstream，只利用其配置、算法选择回源IP地址，而不走upstream的回源流程。
 
