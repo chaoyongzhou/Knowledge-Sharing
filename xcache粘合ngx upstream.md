@@ -8,7 +8,7 @@
 
 困难点在于proxy在ngx content阶段介入，向源站发起请求，而xcache需要在ngx content阶段介入，自己向源站发起请求，需要掐掉upstream建连部分。
 
-因为，xcache需要解决的问题是，粘合upstream，只利用其配置、算法选择回源IP地址，而不走upstream的回源流程。
+因此，xcache需要解决的问题是，粘合upstream，只利用其配置、算法选择回源IP地址，而不走upstream的回源流程。
 
 ## 2、upstream原理分析
 
