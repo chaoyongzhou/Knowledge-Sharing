@@ -409,7 +409,7 @@ xcache粘合只关心如何获取peer，并不关心connection，因此这里的
 	    ......
 	}
 
-即，初始化当前keepalive upstream模块，需要先通过handler original\_init\_upstream初始化它的父模块，这儿体现的是继承性。再回溯指令keepalive的处理接口ngx\_http\_upstream\_keepalive，original\_init\_upstream要么被设定为uscf->peer.init\_upstream，要么被设定为ngx\_http\_upstream\_init\_round\_robin，取决于当前upstream是否存在父模块。每个upstream模块都有自己的初始化接口，根据模块的继承关系，先初始化符模块，再初始化当前模块。往上追溯继承关系的源头，根模块即使round robin。
+即，初始化当前keepalive upstream模块，需要先通过handler original\_init\_upstream初始化它的父模块，这儿体现的是继承性。再回溯指令keepalive的处理接口ngx\_http\_upstream\_keepalive，original\_init\_upstream要么被设定为uscf->peer.init\_upstream，要么被设定为ngx\_http\_upstream\_init\_round\_robin，取决于当前upstream是否存在父模块。每个upstream模块都有自己的初始化接口，根据模块的继承关系，先初始化父模块，再初始化当前模块。往上追溯继承关系的源头，根模块为round robin。
 
 	static char *
 	ngx_http_upstream_keepalive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
@@ -442,7 +442,7 @@ xcache粘合只关心如何获取peer，并不关心connection，因此这里的
 
 那么，获取peer是直接通过ngx\_http\_upstream\_get\_round\_robin\_peer接口获取的吗？非也！
 
-虽然upstream模块都继承于round robin，但是各自算法不同、策略不同，因为通常的办法是设定自己的peer数据结构，并继承ngx\_http\_upstream\_rr\_peer\_t结构，指向round robin模块的peer，这个upstream模块初始化的后半程完成（前半程为round robin模块初始化）。因此，获取peer需要在运行期间，根据算法策略获得相应的模块，并调用其peer get接口。
+虽然upstream模块都继承于round robin，但是各自算法不同、策略不同，通常的办法是设定自己的peer数据结构，并继承ngx\_http\_upstream\_rr\_peer\_t结构，指向round robin模块的peer，这在upstream模块初始化的后半程完成（前半程为round robin模块初始化）。因此，获取peer需要在运行期间，根据算法策略获得相应的模块，并调用其peer get接口。
 
 这里不可理喻之处在于，每个upstream单独维护了peer的down标志。比如，如果一个server同时配置在两个upstream中，运行期间其中一个upstream将其标down，另外一个upstream是不可感知的。
 
