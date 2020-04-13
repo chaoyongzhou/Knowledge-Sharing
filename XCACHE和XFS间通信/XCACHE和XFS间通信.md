@@ -19,7 +19,7 @@ XCACHE侧：
 
 	* BGN 818端口：走BGN协议，负责与XFS和CONSOLE交互，以及其它走BGN协议的端交互
 
-	* BGN 918端口：走HTTP/HTTPS协议，负责NGX REST API交互
+	* BGN 918端口：走HTTP~~/HTTPS~~协议，负责NGX REST API交互
 
 
 
@@ -27,14 +27,14 @@ XFS侧：
 
 	* BGN 618端口：走BGN协议，负责与XCACHE和CONSOLE交互，以及其它走BGN协议的端交互
 
-	* BGN 718端口：走HTTP/HTTPS协议，负责XFS REST API交互
+	* BGN 718端口：走HTTP~~/HTTPS~~协议，负责XFS REST API交互
 
 
 ## 2、网络架构
 
 XCACHE将nginx worker进程改造成唯一可标识的。每个nginx worker拥有唯一的tcid，以及对应的物理传输网络的bgn端口和rest端口。
 
-XFS采用单盘单进程管理。每个XFS进程拥有tcid唯一标识，以及对应的物理传输网络的bgn端口和rest端口。
+XFS采用单盘单进程管理。每个XFS进程拥有唯一的tcid标识，以及对应的物理传输网络的bgn端口和rest端口。
 
 nginx worker进程和XFS进程之间两两建立长连接。节点内所有nginx worker进程看作一个资源池，所有XFS进程看作一个资源池，两个池之间遵从master-slave的计算（网络）模型。
 
@@ -67,11 +67,11 @@ master-slave计算（网络）模型配置：
 
 按启动先后顺序看：
 
-（1）NGX先启动，XFS后启动：XFS查看配置得知自己角色是master，尝试与所有角色是slave的BGN节点建连。
+（1）NGX先启动，XFS后启动：XFS查看配置得知自己角色是master，尝试与所有角色是slave的NGX建连。
 
-（2）XFS先启动，NGX后启动：NGX查看配置得知自己角色是slave，尝试与所有角色是master的BGN节点建连。
+（2）XFS先启动，NGX后启动：NGX查看配置得知自己角色是slave，尝试与所有角色是master的XFS建连。
 
-（3）NGX和XFS都启动后断连：此情况应尽力避免，需要靠第三方探测报告。
+（3）NGX和XFS都启动后断连：此情况应尽力避免，需要靠第三方探测。
 
 ## 4、一致性哈希表
 
@@ -98,7 +98,7 @@ nginx worker根据每个访问资源在XFS中的存储路径，首先判断是�
         &recv_mod_node,
         &ret, FI_cxfs_read_e, CMPI_ERROR_MODI, file_path, &store_offset, store_size, content_cbytes);
 
-task\_p2p为点对点阻塞任务通信（单播）， recv\_mod\_node为接收端四元组，FI\_cxfs\_read\_e为XFS模块的接口cxfs\_read\_e标识，后面的参数依次为：文件路径（file\_path）、文件内偏移量（store\_offset）、文件读取长度（store\_size）、返回文件内容存放处（content\_cbytes）。
+task\_p2p为点对点任务通信（单播）， recv\_mod\_node为接收端四元组，FI\_cxfs\_read\_e为XFS模块的接口cxfs\_read\_e标识，后面的参数依次为：文件路径（file\_path）、文件内偏移量（store\_offset）、文件读取长度（store\_size）、返回文件内容存放处（content\_cbytes）。
 
 ### 5.2、写文件
 
@@ -113,13 +113,13 @@ task\_p2p为点对点阻塞任务通信（单播）， recv\_mod\_node为接收�
         &recv_mod_node,
         &ret, FI_cxfs_update_with_token, CMPI_ERROR_MODI, file_path, cbytes, auth_token);
 
-task\_p2p为点对点阻塞任务通信（单播）， recv\_mod\_node为接收端四元组，FI\_cxfs\_update\_with\_token为XFS模块的接口cxfs\_update\_with\_token标识，后面的参数依次为：文件路径（file\_path）、文件内容（cbytes）、合并回源过程中获得的token（auth\_token）。
+task\_p2p为点对点任务通信（单播）， recv\_mod\_node为接收端四元组，FI\_cxfs\_update\_with\_token为XFS模块的接口cxfs\_update\_with\_token标识，后面的参数依次为：文件路径（file\_path）、文件内容（cbytes）、合并回源过程中获得的token（auth\_token）。
 
-注意：XCACHE中写文件使用的是update接口，而不是write接口（FI\_cxfs\_write），是考虑到出现多个请求独立回源后写盘的情形，所以总是后来的覆盖前面的策略。
+注意：XCACHE中写文件使用的是update接口，而不是write接口（FI\_cxfs\_write），是考虑到出现多个请求独立回源后写盘的情形，所以选择后面的覆盖前面的策略。
 
 ### 5.3、删文件/删目录
 
-基于BGN的任务通信机制，nginx worker向节点内全体XFS发起删目前请求：
+基于BGN的任务通信机制，nginx worker向节点内全体XFS发起删目录请求：
 
     cmon_md_id = TASK_BRD_CMON_ID(task_brd);
 
