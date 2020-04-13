@@ -63,7 +63,7 @@ XCACHE将NGX和BGN融合，BGN与XFS（也是BGN节点）保持长连接通信�
 ![](01.png)
 
 
-从旧的nginx worker发出的请求，RFS能够正确响应回来，正是基于不同的通信子（comm）来区分的。在nginx reload时，旧nginx worker会立即关闭bgn和rest监听端口，新nginx worker开启bgn和rest监听端口，这是与nginx设计不同的地方：nginx在master进程开启所有监听端口，worker只是继承，而BGN将每个nginx worker赋予唯一的bgn和rest端口号，任务通信子（tcid）和通信子（comm）也不同。
+从旧的nginx worker发出的请求，XFS能够正确响应回来，正是基于不同的通信子（comm）来区分的。在nginx reload时，旧nginx worker会立即关闭bgn和rest监听端口，新nginx worker开启bgn和rest监听端口，这是与nginx设计不同的地方：nginx在master进程开启所有监听端口，worker只是继承，而BGN将每个nginx worker赋予唯一的bgn和rest端口号，任务通信子（tcid）和通信子（comm）也不同。
 
 
 ## 3、进程组内进程标识（rank）
