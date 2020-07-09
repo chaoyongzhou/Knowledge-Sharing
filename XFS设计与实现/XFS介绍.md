@@ -10,7 +10,7 @@ XFS是RFS（Random access File System）的延续，增加了裸盘管理和DMA�
 
 2、架构
 
-![图 2-1]()
+![图 2-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-2-1.png)
 
 
 XFS对外提供三类接口：
@@ -154,7 +154,7 @@ Data node用来管理磁盘空间的分配与回收。 比如，写文件时，�
 
 示意图：
 
-![图 6-1-1]()
+![图 6-1-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-1-1.png)
 
 
 6.2、Name node设计
@@ -169,7 +169,7 @@ dnode用红黑树（rb tree）组织，树根就是当前目录。由于子目�
 
 比如，XFS存储三个文件：/a/b/c, /a/d/e, /a/d/f，name node中组织形式表达为：
 
-![图 6-2-1-1]()
+![图 6-2-1-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-2-1-1.png)
 
 其中，{a, b, d}是一棵红黑树，{b, c}是一棵红黑树，{d, e, f}是一棵红黑树。
 
@@ -185,7 +185,7 @@ XFS以item的方式来组织dnode/fnode，且包含key信息。
 
 在不影响理解的语境下，约定成俗，我们口头上不区分item/inode。比如说一个inode占64字节，实际是指一个item占64字节。
 
-![图 6-2-2-1]()
+![图 6-2-2-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-2-2-1.png)
 
 6.3、Data node设计
 
@@ -195,7 +195,7 @@ data node按照卷（volume）、虚拟磁盘（virtual disk）、块（block）
 
 data node可分配的最小单位为page，即4KB（或其它，比如32KB），最大单位为block，即64MB。
 
- ![图 6-3-1]()
+ ![图 6-3-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-3-1.png)
 
 
 data node空间管理核心算法是分裂与合并，是一对互逆操作。
@@ -212,55 +212,55 @@ data node空间管理核心算法是分裂与合并，是一对互逆操作。
 
 （1）分配1个页
 
-![图 6-4-1]()
+![图 6-4-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-1.png)
 
 S1~S5为分裂步骤
 
 （2）再分配5个页
 
-![图 6-4-2]()
+![图 6-4-2](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-2.png)
 
 S1~S2为分裂步骤
 
 （3）再分配9个页
 
-![图 6-4-3]()
+![图 6-4-3](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-3.png)
 
 S1~S3为分裂步骤
 
 （4）再分配3个页
 
-![图 6-4-4]()
+![图 6-4-4](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-4.png)
 
 S1为分裂步骤
 
 （5）再分配3个页
 
-![图 6-4-5]()
+![图 6-4-5](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-5.png)
 
 S1为分裂步骤
 
 （6）释放第0页
 
-![图 6-4-6]()
+![图 6-4-6](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-6.png)
 
 M1为合并终止点
 
 （7）再释放第28~30页
 
-![图 6-4-7]()
+![图 6-4-7](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-7.png)
 
 M1为合并终止点
 
 （8）再释放第8~12页
 
-![图 6-4-8]()
+![图 6-4-8](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-8.png)
 
 M1为合并终止点
 
 （9）再释放第4~6页
 
-![图 6-4-9]()
+![图 6-4-9](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-4-9.png)
 
 M1为合并终止点
 
@@ -275,24 +275,24 @@ XFS管理的磁盘一般由元数据区和数据区构成。元数据主要是na
 
 （1）元数据区在磁盘头部位置
 
-![图 6-5-1-1]()
+![图 6-5-1-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-5-1-1.png)
 
 
 （2）元数据区在磁盘尾部位置
 
-![图 6-5-1-2]()
+![图 6-5-1-2](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-5-1-2.png)
 
 （3）元数据区在磁盘之外
 
 SATA盘为纯数据盘，元数据放在SSD盘。
 
-![图 6-5-1-3]()
+![图 6-5-1-3](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-5-1-3.png)
 
 XFS对以上三种布局都支持过，最新版本保留对第（2）、（3）两种方式的支持。
 
 6.5.2、元数据区布局
 
-![图 6-5-2-1]()
+![图 6-5-2-1](https://github.com/chaoyongzhou/Knowledge-Sharing/blob/master/XFS%E8%AE%BE%E8%AE%A1%E4%B8%8E%E5%AE%9E%E7%8E%B0/xfs-6-5-2-1.png)
 
 其中，config用来引导XFS的启动，记录各区域偏移量和大小信息，包括但不限于：
 （1）SATA盘的容量、
