@@ -1,7 +1,7 @@
 8个ngx worker和12个xfs的配置举例如下：
 
 	<sysConfig>
-	  <taskConfig
+	  <taskConfig>
 	    <tasks tcid="10.10.67.18-29"  maski="0" maske="0" ipv4="127.0.0.1" bgn="618-629" rest="718-729" cluster="1,3"/>
 	    <tasks tcid="10.10.6.18-29"  maski="0" maske="0" ipv4="127.0.0.1" bgn="818-829" rest="918-929" cluster="1,3"/>
 	    <tasks tcid="10.10.7.18-29"  maski="0" maske="0" ipv4="127.0.0.1" bgn="838-849" rest="938-949" cluster="1,3"/>
