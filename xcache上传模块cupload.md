@@ -108,5 +108,5 @@ xcache的上传模块cupload支持断点续传，文件大小不限，支持http
 
  ## 5、客户端工具源码
 
-perl脚本文件：[https://github.com/chaoyongzhou/XCACHE/blob/master/bgn_ngx/tool/cupload.pl](cupload.pl)
+perl脚本文件：[cupload.pl](https://github.com/chaoyongzhou/XCACHE/blob/master/bgn_ngx/tool/cupload.pl "cupload.pl")
 
