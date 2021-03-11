@@ -82,9 +82,8 @@ xcache的下载模块cdownload支持断点续传，文件大小不限，支持ht
 	    listen  80;
 	    server_name *.download.com;
 	
-	    if ($uri = "/") {
-	        rewrite (.*) /index.html;
-	    }
+	    set $c_acl_token   0123456789abcdef0123456789abcdef;
+    	access_by_bgn cacltime;
 	
 	    location ~ /(download|check|delete|size|md5|ddir|finger|backup) {
 	    	root /tmp/download;
