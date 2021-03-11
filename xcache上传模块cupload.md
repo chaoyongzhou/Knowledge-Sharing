@@ -82,9 +82,12 @@ xcache的上传模块cupload支持断点续传，文件大小不限，支持http
 	    listen  80;
 	    server_name *.upload.com;
 	
+		client_body_in_file_only off;
+	    client_max_body_size 4m;
+	    
 	    set $c_acl_token   0123456789abcdef0123456789abcdef;
     	access_by_bgn cacltime;
-	    location ~ /(upload|merge|delete|size|md5|empty|override|check) {
+	    location ~ /(upload|check|merge|delete|size|md5|empty|override) {
 	    	root /tmp/upload;
 	        content_by_bgn cupload;
 	    }
