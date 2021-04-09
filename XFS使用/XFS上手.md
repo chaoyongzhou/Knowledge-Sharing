@@ -133,19 +133,19 @@ xfs支持HTTP REST API访问和CONSOLE口访问
 	| 接口 | 方法 | 功能 |
 	--------------------
 		
-	| /xfs/getsmf/<path> [-H "store-offset: <offset>" -H "store-size: <size>"] | GET | 读文件 |
+	| <path>?mod=xfs&op=getsmf [-H "store-offset: <offset>" -H "store-size: <size>"] | GET | 读文件 |
 	
-	| /xfs/dsmf/<path> | GET | 删文件 |
-	| /xfs/ddir/<path> | GET | 删目录 |
-	| /xfs/setsmf/<path> | POST | 写文件 |
-	| /xfs/update/<path> | POST | 更新文件 |
-	| /xfs/renew/<path> | POST | 更新文件（同upate） |
+	| <path>?mod=xfs&op=dsmf | GET | 删文件 |
+	| <path>?mod=xfs&op=ddir | GET | 删目录 |
+	| <path>?mod=xfs&op=setsmf | POST | 写文件 |
+	| <path>?mod=xfs&op=update | POST | 更新文件 |
+	| <path>?mod=xfs&op=renew | POST | 更新文件（同upate） |
 	
 举例： 
 
-	curl -v "http://127.1:718/xfs/getsmf/www.test.com/1K.dat/0"
+	curl -X GET -v "http://127.1:718/www.test.com/1K.dat/0?mod=xfs&op=getsmf"
 
-更多接口请参考cxfshttp.c文件。其中服务脚本/etc/init.d/xfs中的部分功能利用HTTP REST API功能实现。
+更多接口请参考cxfshttp.c文件。
 
 ## 4.2、console访问
 
