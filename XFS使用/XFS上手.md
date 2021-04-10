@@ -129,21 +129,57 @@ xfs支持HTTP REST API访问和CONSOLE口访问
 
 常用接口列表：
 
+（1）写文件
 
-	| 接口 | 方法 | 功能 |
-	--------------------
-		
-	| <path>?mod=xfs&op=getsmf [-H "store-offset: <offset>" -H "store-size: <size>"] | GET | 读文件 |
-	
-	| <path>?mod=xfs&op=dsmf | GET | 删文件 |
-	| <path>?mod=xfs&op=ddir | GET | 删目录 |
-	| <path>?mod=xfs&op=setsmf | POST | 写文件 |
-	| <path>?mod=xfs&op=update | POST | 更新文件 |
-	| <path>?mod=xfs&op=renew | POST | 更新文件（同upate） |
-	
-举例： 
+接口： 
 
-	curl -X GET -v "http://127.1:718/www.test.com/1K.dat/0?mod=xfs&op=getsmf"
+	POST <path>?mod=xfs&op=setsmf HTTP/1.1
+
+举例：
+
+	curl -X POST -v "http://127.1:718/bucket01/test.dat?mod=xfs&op=setsmf" -d "hello world"
+
+
+（2）读文件
+
+接口： 
+
+	GET <path>?mod=xfs&op=getsmf HTTP/1.1
+
+举例：
+
+	curl -X GET -v "http://127.1:718/bucket01/test.dat?mod=xfs&op=getsmf"
+
+（3）更新文件
+
+接口： 
+
+	PUT <path>?mod=xfs&op=update HTTP/1.1
+
+举例：
+
+	curl -X PUT -v "http://127.1:718/bucket01/test.dat?mod=xfs&op=update" -d "welcome to china"
+
+（4）删除文件
+
+接口： 
+
+	DELETE <path>?mod=xfs&op=dsmf HTTP/1.1
+
+举例：
+
+	curl -X DELETE -v "http://127.1:718/bucket01/test.dat?mod=xfs&op=dsmf"
+
+（5）删除目录
+
+接口： 
+
+	DELETE <path>?mod=xfs&op=ddir HTTP/1.1
+
+举例：
+
+	curl -X DELETE -v "http://127.1:718/bucket01/?mod=xfs&op=ddir"
+
 
 更多接口请参考cxfshttp.c文件。
 
